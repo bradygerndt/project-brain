@@ -3,9 +3,13 @@
   "version": "1.0.0",
   "type": "module",
   "main": "src/server.js",
+  "bin": {
+    "brain": "./bin/brain.js"
+  },
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "brain": "node bin/brain.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
@@ -13,6 +17,7 @@
     "@lancedb/lancedb": "^0.37.1",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "express": "^5.2.1",
+    "js-yaml": "^5.2.3",
     "zod": "^4.4.3"
   }
 }
