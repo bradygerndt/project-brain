@@ -1,0 +1,35 @@
+services:
+  brain-home:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3579:3579"
+      - "3580:3580"
+    volumes:
+      - brain-home-data:/app/data
+      - hf-cache:/root/.cache/huggingface
+    environment:
+      BRAIN_NAME: home
+      MCP_PORT: 3579
+      ARTIFACTS_PORT: 3580
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+
+  # brain-work:
+  #   build: .
+  #   restart: unless-stopped
+  #   ports:
+  #     - "3589:3589"
+  #     - "3590:3590"
+  #   volumes:
+  #     - brain-work-data:/app/data
+  #     - hf-cache:/root/.cache/huggingface
+  #   environment:
+  #     BRAIN_NAME: work
+  #     MCP_PORT: 3589
+  #     ARTIFACTS_PORT: 3590
+  #     ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+
+volumes:
+  brain-home-data:
+  # brain-work-data:
+  hf-cache:

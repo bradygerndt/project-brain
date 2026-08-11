@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>project-brain</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #0f1117; color: #e2e8f0; min-height: 100vh; }
+
+  header { background: #1a1d2e; border-bottom: 1px solid #2d3154; padding: 12px 24px; display: flex; align-items: center; gap: 16px; }
+  header h1 { font-size: 1.1rem; font-weight: 600; color: #a78bfa; }
+  .brain-badge { background: #2d3154; color: #94a3b8; font-size: 0.75rem; padding: 2px 8px; border-radius: 12px; }
+  .session-count { margin-left: auto; font-size: 0.75rem; color: #64748b; }
+
+  nav { display: flex; gap: 0; border-bottom: 1px solid #2d3154; background: #13161f; padding: 0 24px; }
+  nav button { background: none; border: none; color: #64748b; padding: 10px 16px; cursor: pointer; font-size: 0.875rem; border-bottom: 2px solid transparent; transition: color 0.15s; }
+  nav button.active, nav button:hover { color: #a78bfa; border-bottom-color: #a78bfa; }
+
+  main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+
+  .search-bar { display: flex; gap: 8px; margin-bottom: 20px; }
+  .search-bar input { flex: 1; background: #1a1d2e; border: 1px solid #2d3154; color: #e2e8f0; padding: 8px 12px; border-radius: 6px; font-size: 0.9rem; outline: none; }
+  .search-bar input:focus { border-color: #a78bfa; }
+  .search-bar select, .search-bar button { background: #1a1d2e; border: 1px solid #2d3154; color: #e2e8f0; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 0.875rem; }
+  .search-bar button { background: #a78bfa; border-color: #a78bfa; color: #0f1117; font-weight: 600; }
+  .search-bar button:hover { background: #9061f9; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+  th { text-align: left; padding: 8px 12px; color: #64748b; font-weight: 500; border-bottom: 1px solid #2d3154; white-space: nowrap; }
+  td { padding: 8px 12px; border-bottom: 1px solid #1e2132; vertical-align: top; }
+  tr:hover td { background: #1a1d2e; }
+  .key { color: #a78bfa; font-family: monospace; font-size: 0.8rem; }
+  .value { color: #e2e8f0; max-width: 400px; word-break: break-word; }
+  .value .snippet em { color: #fbbf24; font-style: normal; }
+  .ns { color: #64748b; font-size: 0.75rem; }
+  .source { color: #64748b; font-size: 0.75rem; }
+  .age { color: #64748b; font-size: 0.75rem; white-space: nowrap; }
+  .tag { display: inline-block; background: #2d3154; color: #94a3b8; font-size: 0.7rem; padding: 1px 6px; border-radius: 10px; margin: 1px 2px; }
+  .score { color: #34d399; font-size: 0.75rem; font-family: monospace; }
+
+  .artifact-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+  .artifact-card { background: #1a1d2e; border: 1px solid #2d3154; border-radius: 8px; overflow: hidden; }
+  .artifact-preview { height: 120px; display: flex; align-items: center; justify-content: center; background: #13161f; overflow: hidden; }
+  .artifact-preview img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .artifact-preview .icon { font-size: 2.5rem; }
+  .artifact-info { padding: 8px; }
+  .artifact-name { font-size: 0.8rem; color: #a78bfa; word-break: break-word; margin-bottom: 4px; }
+  .artifact-meta { font-size: 0.7rem; color: #64748b; }
+  .artifact-link { font-size: 0.7rem; color: #60a5fa; text-decoration: none; }
+  .artifact-link:hover { text-decoration: underline; }
+
+  .agent-table { font-size: 0.875rem; }
+  .status-working { color: #34d399; }
+  .status-idle { color: #94a3b8; }
+  .status-blocked { color: #f87171; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .dot-working { background: #34d399; }
+  .dot-idle { background: #94a3b8; }
+  .dot-blocked { background: #f87171; }
+  .dot-default { background: #a78bfa; }
+
+  .add-form { background: #1a1d2e; border: 1px solid #2d3154; border-radius: 8px; padding: 16px; margin-bottom: 20px; display: none; }
+  .add-form.open { display: block; }
+  .add-form label { display: block; font-size: 0.75rem; color: #94a3b8; margin-bottom: 4px; margin-top: 10px; }
+  .add-form input, .add-form textarea, .add-form select { width: 100%; background: #13161f; border: 1px solid #2d3154; color: #e2e8f0; padding: 6px 10px; border-radius: 4px; font-size: 0.875rem; outline: none; }
+  .add-form input:focus, .add-form textarea:focus { border-color: #a78bfa; }
+  .add-form textarea { min-height: 80px; resize: vertical; }
+  .add-form .actions { display: flex; gap: 8px; margin-top: 12px; }
+  .btn { background: #a78bfa; border: none; color: #0f1117; padding: 6px 14px; border-radius: 5px; cursor: pointer; font-size: 0.875rem; font-weight: 600; }
+  .btn-ghost { background: #2d3154; color: #94a3b8; }
+  .btn:hover { opacity: 0.9; }
+
+  .empty { color: #64748b; text-align: center; padding: 40px; }
+  .error { color: #f87171; padding: 8px 12px; background: #2d1b1b; border-radius: 6px; margin-bottom: 12px; font-size: 0.875rem; }
+  .loading { color: #64748b; text-align: center; padding: 20px; }
+
+  .pagination { display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; align-items: center; font-size: 0.875rem; color: #64748b; }
+  .pagination button { background: #1a1d2e; border: 1px solid #2d3154; color: #94a3b8; padding: 4px 10px; border-radius: 4px; cursor: pointer; }
+  .pagination button:disabled { opacity: 0.4; cursor: default; }
+
+  .panel { display: none; }
+  .panel.active { display: block; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>project-brain</h1>
+  <span class="brain-badge" id="brainName">…</span>
+  <span class="session-count" id="sessionCount"></span>
+</header>
+
+<nav>
+  <button class="active" onclick="showPanel('memory')">Memory</button>
+  <button onclick="showPanel('artifacts')">Artifacts</button>
+  <button onclick="showPanel('agents')">Agents</button>
+</nav>
+
+<main>
+
+  <!-- MEMORY PANEL -->
+  <div id="panel-memory" class="panel active">
+    <div class="search-bar">
+      <input id="memSearch" type="text" placeholder="Search memories…" onkeydown="if(event.key==='Enter')searchMemory()">
+      <select id="searchType">
+        <option value="keyword">Keyword</option>
+        <option value="semantic">Semantic</option>
+      </select>
+      <input id="nsFilter" type="text" placeholder="namespace" style="max-width:140px">
+      <button onclick="searchMemory()">Search</button>
+      <button class="btn-ghost" onclick="loadAllMemory()">Browse all</button>
+      <button class="btn-ghost" onclick="toggleAddForm()">+ Add</button>
+    </div>
+
+    <div class="add-form" id="addForm">
+      <label>Key (dot.namespaced)</label>
+      <input id="newKey" placeholder="e.g. decision.api-style">
+      <label>Value</label>
+      <textarea id="newValue" placeholder="The value to store"></textarea>
+      <label>Namespace</label>
+      <input id="newNs" placeholder="default">
+      <label>Tags (comma-separated)</label>
+      <input id="newTags" placeholder="tag1, tag2">
+      <div class="actions">
+        <button class="btn" onclick="addMemory()">Save</button>
+        <button class="btn btn-ghost" onclick="toggleAddForm()">Cancel</button>
+      </div>
+    </div>
+
+    <div id="memError" class="error" style="display:none"></div>
+    <div id="memResults"></div>
+    <div class="pagination" id="memPagination" style="display:none">
+      <button id="prevBtn" onclick="changePage(-1)">← Prev</button>
+      <span id="pageInfo"></span>
+      <button id="nextBtn" onclick="changePage(1)">Next →</button>
+    </div>
+  </div>
+
+  <!-- ARTIFACTS PANEL -->
+  <div id="panel-artifacts" class="panel">
+    <div class="search-bar">
+      <input id="tagFilter" type="text" placeholder="Filter by tag…">
+      <button onclick="loadArtifacts()">Filter</button>
+    </div>
+    <div id="artifactResults"></div>
+  </div>
+
+  <!-- AGENTS PANEL -->
+  <div id="panel-agents" class="panel">
+    <div class="search-bar">
+      <button onclick="loadAgents()">Refresh</button>
+    </div>
+    <div id="agentResults"></div>
+  </div>
+
+</main>
+
+<script>
+const BASE = '';
+let currentOffset = 0;
+const PAGE = 50;
+let lastSearch = null;
+let navBtns = document.querySelectorAll('nav button');
+
+function showPanel(name) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('panel-' + name).classList.add('active');
+  navBtns.forEach((b, i) => b.classList.toggle('active', ['memory','artifacts','agents'][i] === name));
+  if (name === 'artifacts') loadArtifacts();
+  if (name === 'agents') loadAgents();
+}
+
+function timeAgo(ms) {
+  const s = Math.floor((Date.now() - ms) / 1000);
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s/60)}m ago`;
+  if (s < 86400) return `${Math.floor(s/3600)}h ago`;
+  return `${Math.floor(s/86400)}d ago`;
+}
+
+function renderMemoryTable(rows, isSearch = false) {
+  if (!rows.length) {
+    document.getElementById('memResults').innerHTML = '<div class="empty">No results</div>';
+    return;
+  }
+  const cols = isSearch ? 'Key,Value / Snippet,Namespace,Tags,Source,Updated' : 'Key,Value,Namespace,Tags,Source,Updated';
+  let html = `<table><thead><tr>${cols.split(',').map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>`;
+  for (const r of rows) {
+    const tags = (r.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('');
+    const val = r.snippet
+      ? r.snippet.replace(/\[/g,'<em>').replace(/\]/g,'</em>')
+      : esc(r.value ?? '');
+    const score = r._score != null ? `<br><span class="score">sim: ${(1 - r._score).toFixed(3)}</span>` : '';
+    html += `<tr>
+      <td><span class="key">${esc(r.key)}</span><br><span class="ns">${esc(r.namespace ?? '')}</span></td>
+      <td class="value">${val}${score}</td>
+      ${isSearch ? '' : `<td class="ns">${esc(r.namespace ?? '')}</td>`}
+      <td>${tags}</td>
+      <td class="source">${esc(r.source ?? '—')}</td>
+      <td class="age">${timeAgo(r.updated_at)}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  document.getElementById('memResults').innerHTML = html;
+}
+
+async function searchMemory() {
+  const q = document.getElementById('memSearch').value.trim();
+  const type = document.getElementById('searchType').value;
+  const ns = document.getElementById('nsFilter').value.trim();
+  if (!q) { loadAllMemory(); return; }
+  showError('mem', null);
+  document.getElementById('memResults').innerHTML = '<div class="loading">Searching…</div>';
+  document.getElementById('memPagination').style.display = 'none';
+  lastSearch = { q, type, ns };
+  try {
+    const endpoint = type === 'semantic' ? '/api/memory/semantic' : '/api/memory';
+    const url = `${BASE}${endpoint}?q=${encodeURIComponent(q)}${ns ? '&ns='+encodeURIComponent(ns) : ''}&limit=50`;
+    const data = await fetch(url).then(r => r.json());
+    if (data.error) throw new Error(data.error);
+    renderMemoryTable(data, true);
+  } catch (e) { showError('mem', e.message); }
+}
+
+async function loadAllMemory(offset = 0) {
+  currentOffset = offset;
+  lastSearch = null;
+  const ns = document.getElementById('nsFilter').value.trim();
+  showError('mem', null);
+  document.getElementById('memResults').innerHTML = '<div class="loading">Loading…</div>';
+  try {
+    const url = `${BASE}/api/memory/list?limit=${PAGE}&offset=${offset}${ns ? '&ns='+encodeURIComponent(ns) : ''}`;
+    const data = await fetch(url).then(r => r.json());
+    if (data.error) throw new Error(data.error);
+    renderMemoryTable(data);
+    const pag = document.getElementById('memPagination');
+    pag.style.display = 'flex';
+    document.getElementById('pageInfo').textContent = `${offset + 1}–${offset + data.length}`;
+    document.getElementById('prevBtn').disabled = offset === 0;
+    document.getElementById('nextBtn').disabled = data.length < PAGE;
+  } catch (e) { showError('mem', e.message); }
+}
+
+function changePage(dir) {
+  loadAllMemory(Math.max(0, currentOffset + dir * PAGE));
+}
+
+function toggleAddForm() {
+  document.getElementById('addForm').classList.toggle('open');
+}
+
+async function addMemory() {
+  const key = document.getElementById('newKey').value.trim();
+  const value = document.getElementById('newValue').value.trim();
+  const namespace = document.getElementById('newNs').value.trim() || 'default';
+  const tags = document.getElementById('newTags').value.split(',').map(t=>t.trim()).filter(Boolean);
+  if (!key || !value) { showError('mem', 'Key and value are required'); return; }
+  try {
+    const res = await fetch(`${BASE}/api/memory`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key, value, namespace, tags, source: 'manual' })
+    });
+    if (!res.ok) { const d = await res.json(); throw new Error(d.error); }
+    toggleAddForm();
+    loadAllMemory();
+  } catch (e) { showError('mem', e.message); }
+}
+
+async function loadArtifacts() {
+  const tag = document.getElementById('tagFilter').value.trim();
+  document.getElementById('artifactResults').innerHTML = '<div class="loading">Loading…</div>';
+  try {
+    const url = `${BASE}/api/artifacts?limit=100${tag ? '&tag='+encodeURIComponent(tag) : ''}`;
+    const data = await fetch(url).then(r => r.json());
+    if (!data.length) { document.getElementById('artifactResults').innerHTML = '<div class="empty">No artifacts</div>'; return; }
+    const icons = { 'text/html': '📄', 'application/json': '{}', 'application/yaml': '📋', 'image/': '🖼️' };
+    function icon(mime) { for (const [k,v] of Object.entries(icons)) if (mime.startsWith(k)) return v; return '📦'; }
+    const html = `<div class="artifact-grid">${data.map(a => `
+      <div class="artifact-card">
+        <div class="artifact-preview">
+          ${a.mime_type?.startsWith('image/') ? `<img src="${esc(a.url)}" alt="">` : `<span class="icon">${icon(a.mime_type)}</span>`}
+        </div>
+        <div class="artifact-info">
+          <div class="artifact-name">${esc(a.name)}</div>
+          <div class="artifact-meta">${esc(a.mime_type)} · ${(a.size_bytes/1024).toFixed(1)}KB</div>
+          <div class="artifact-meta">${timeAgo(a.created_at)}</div>
+          <a class="artifact-link" href="${esc(a.url)}" target="_blank">Open ↗</a>
+        </div>
+      </div>`).join('')}</div>`;
+    document.getElementById('artifactResults').innerHTML = html;
+  } catch (e) { document.getElementById('artifactResults').innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+}
+
+async function loadAgents() {
+  document.getElementById('agentResults').innerHTML = '<div class="loading">Loading…</div>';
+  try {
+    const data = await fetch(`${BASE}/api/agents`).then(r => r.json());
+    if (!data.length) { document.getElementById('agentResults').innerHTML = '<div class="empty">No active agents</div>'; return; }
+    let html = `<table class="agent-table"><thead><tr><th>Agent</th><th>Status</th><th>Focus</th><th>Expires</th></tr></thead><tbody>`;
+    for (const a of data) {
+      const cls = a.status === 'working' ? 'working' : a.status === 'idle' ? 'idle' : a.status === 'blocked' ? 'blocked' : 'default';
+      html += `<tr>
+        <td style="font-family:monospace;font-size:0.8rem">${esc(a.agent_id)}</td>
+        <td><span class="dot dot-${cls}"></span><span class="status-${cls}">${esc(a.status)}</span></td>
+        <td style="font-size:0.8rem;color:#94a3b8">${esc(a.focus ?? '—')}</td>
+        <td class="age">${timeAgo(Date.now() - (a.expires_at - Date.now()))}</td>
+      </tr>`;
+    }
+    html += '</tbody></table>';
+    document.getElementById('agentResults').innerHTML = html;
+  } catch (e) { document.getElementById('agentResults').innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+}
+
+function showError(prefix, msg) {
+  const el = document.getElementById(prefix + 'Error');
+  if (!el) return;
+  el.style.display = msg ? 'block' : 'none';
+  if (msg) el.textContent = msg;
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// Health poll + init
+async function pollHealth() {
+  try {
+    const d = await fetch(`${BASE}/health`).then(r => r.json());
+    document.getElementById('brainName').textContent = d.brain ?? '?';
+    document.getElementById('sessionCount').textContent = `${d.sessions} session${d.sessions!==1?'s':''}`;
+  } catch {}
+}
+
+// POST /api/memory handler (the UI add form uses this)
+// We add a lightweight REST write endpoint on the server side too
+// For now, wire via MCP is the canonical write path; the UI form is a convenience
+
+pollHealth();
+setInterval(pollHealth, 10000);
+loadAllMemory();
+</script>
+</body>
+</html>
