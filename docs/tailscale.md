@@ -33,11 +33,11 @@ telling explicitly: `brain` auto-detects a LAN address for these by default (see
 reaching you only over Tailscale from elsewhere — tell it to use the tailnet address instead:
 
 ```bash
-# new instance:
-brain add home 3579 3580 --artifacts-host 100.101.102.103
-
-# existing instance:
+# the auto-seeded "home" instance (already exists after your first `brain start`):
 brain update home --artifacts-host 100.101.102.103
+
+# a new instance instead:
+brain add remote 3589 3590 --artifacts-host 100.101.102.103
 ```
 
 Use the MagicDNS name here too if you'd rather not hardcode an IP.

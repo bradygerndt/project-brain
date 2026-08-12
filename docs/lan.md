@@ -32,8 +32,8 @@ Machines with multiple network interfaces (VPNs, virtual adapters, several NICs)
 the heuristic. Override it explicitly:
 
 ```bash
-brain add home 3579 3580 --artifacts-host 192.168.1.42     # new instance
-brain update home --artifacts-host 192.168.1.42             # existing instance
+brain update home --artifacts-host 192.168.1.42            # the auto-seeded "home" instance
+brain add work 3589 3590 --artifacts-host 192.168.1.42      # a new instance instead
 ```
 
 If it still doesn't connect from another device, the host's firewall is the usual next

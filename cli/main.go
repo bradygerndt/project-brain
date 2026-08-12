@@ -359,7 +359,7 @@ func cmdAdd(args []string) error {
 	args, artifactsHost := extractFlag(args, "--artifacts-host")
 
 	if len(args) < 3 {
-		return fmt.Errorf("usage: brain add <name> <mcp-port> <artifacts-port> [--tag T | --image I] [--artifacts-host HOST]\n       e.g.  brain add work 3589 3590\n       LAN artifact URLs are auto-detected; --artifacts-host only needed to override (e.g. for Tailscale):\n       e.g.  brain add home 3579 3580 --artifacts-host 100.x.y.z")
+		return fmt.Errorf("usage: brain add <name> <mcp-port> <artifacts-port> [--tag T | --image I] [--artifacts-host HOST]\n       e.g.  brain add work 3589 3590\n       LAN artifact URLs are auto-detected; --artifacts-host only needed to override (e.g. for Tailscale):\n       e.g.  brain add remote 3589 3590 --artifacts-host 100.x.y.z\n       (already have \"home\"? use `brain update home --artifacts-host ...` instead)")
 	}
 	name, mcpStr, artStr := args[0], args[1], args[2]
 
