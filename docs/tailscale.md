@@ -28,8 +28,9 @@ Either the IP or the MagicDNS hostname (e.g. `my-host.tailnet-name.ts.net`) work
 
 Docker already publishes the instance's ports on all interfaces, so the MCP endpoint itself is
 reachable over Tailscale with no extra config. Artifact URLs are the one thing that needs
-telling — without it, the server returns URLs pointing at the container's internal Docker
-network IP, which is unreachable from anywhere but the host itself:
+telling explicitly: `brain` auto-detects a LAN address for these by default (see
+[lan.md](lan.md)), which is right for devices on the same local network but not for a device
+reaching you only over Tailscale from elsewhere — tell it to use the tailnet address instead:
 
 ```bash
 # new instance:

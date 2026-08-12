@@ -17,6 +17,7 @@ import (
 	"github.com/bradygerndt/project-brain/cli/internal/config"
 	"github.com/bradygerndt/project-brain/cli/internal/docker"
 	"github.com/bradygerndt/project-brain/cli/internal/health"
+	"github.com/bradygerndt/project-brain/cli/internal/hostip"
 	"github.com/bradygerndt/project-brain/cli/internal/state"
 	"github.com/bradygerndt/project-brain/cli/internal/ui"
 )
@@ -110,6 +111,17 @@ func resolveImage(tag, image string) string {
 	return imageRef(defaultImageTag)
 }
 
+// resolveArtifactsHost returns the instance's explicit --artifacts-host
+// override if one was set; otherwise it auto-detects a LAN-reachable
+// address fresh on every call (deliberately not cached in instances.yaml,
+// so it tracks the host's current network rather than going stale).
+func resolveArtifactsHost(explicit string) string {
+	if explicit != "" {
+		return explicit
+	}
+	return hostip.Detect()
+}
+
 // --- state helpers ---
 
 // loadSeeded loads instances.yaml, seeding a default "home" instance
@@ -200,7 +212,7 @@ func cmdStart(args []string) error {
 				CacheVolume:   state.CacheVolume,
 				InstanceName:  name,
 				AnthropicKey:  key,
-				ArtifactsHost: inst.ArtifactsHost,
+				ArtifactsHost: resolveArtifactsHost(inst.ArtifactsHost),
 			}); err != nil {
 				ui.Err("%s: %s", name, err.Error())
 				continue
@@ -339,7 +351,7 @@ func cmdAdd(args []string) error {
 	args, artifactsHost := extractFlag(args, "--artifacts-host")
 
 	if len(args) < 3 {
-		return fmt.Errorf("usage: brain add <name> <mcp-port> <artifacts-port> [--tag T | --image I] [--artifacts-host HOST]\n       e.g.  brain add work 3589 3590\n       e.g.  brain add home 3579 3580 --artifacts-host 100.x.y.z   # Tailscale/LAN IP")
+		return fmt.Errorf("usage: brain add <name> <mcp-port> <artifacts-port> [--tag T | --image I] [--artifacts-host HOST]\n       e.g.  brain add work 3589 3590\n       LAN artifact URLs are auto-detected; --artifacts-host only needed to override (e.g. for Tailscale):\n       e.g.  brain add home 3579 3580 --artifacts-host 100.x.y.z")
 	}
 	name, mcpStr, artStr := args[0], args[1], args[2]
 
@@ -549,7 +561,7 @@ func cmdUpdate(args []string) error {
 			CacheVolume:   state.CacheVolume,
 			InstanceName:  name,
 			AnthropicKey:  key,
-			ArtifactsHost: inst.ArtifactsHost,
+			ArtifactsHost: resolveArtifactsHost(inst.ArtifactsHost),
 		}); err != nil {
 			ui.Err("%s: %s", name, err.Error())
 			continue

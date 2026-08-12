@@ -3,21 +3,30 @@
 Same idea as [Tailscale access](tailscale.md), just over your local network instead — useful
 if you don't want to install Tailscale and everything's already on the same Wi-Fi/router.
 
-Docker publishes the instance's ports on all interfaces by default, so any other device on
-your LAN can already reach it once you know the host's local network address — check your
-machine's network settings for its LAN IP (usually something like `192.168.x.x` or
-`10.x.x.x`); how exactly you find it depends on your OS but every OS exposes it somewhere in
-its network/Wi-Fi settings.
-
-Once you have it:
+**This works automatically — no config needed.** `brain` runs on the host itself, so it can
+see the host's real network interfaces (unlike the server, sandboxed inside its container),
+and picks a LAN-reachable address for artifact URLs by default whenever it creates or
+recreates a container. Docker already publishes the instance's ports on all interfaces, so
+once you know the host's LAN IP, any other device on the network can reach it:
 
 ```bash
-brain add home 3579 3580 --artifacts-host 192.168.1.42     # or: brain update home --artifacts-host ...
+# from another device's MCP config, instead of 127.0.0.1:
+http://192.168.1.42:3579/mcp
 ```
 
-(without this, artifact URLs point at the container's internal Docker IP, not your LAN — see
-[tailscale.md](tailscale.md) for why). Then point another device's MCP config at
-`http://192.168.1.42:3579/mcp` instead of `127.0.0.1`, same as the Tailscale doc's step 4.
+Check `brain ps` or `docker inspect brain-<name> --format '{{.Config.Env}}'` (look for
+`ARTIFACTS_HOST`) to see what it auto-detected.
 
-If it doesn't connect, the host's firewall is the usual culprit — it may need an inbound
-allow rule for the MCP/artifacts ports, however your OS manages that.
+## If auto-detection picks the wrong address
+
+Machines with multiple network interfaces (VPNs, virtual adapters, several NICs) can confuse
+the heuristic. Override it explicitly:
+
+```bash
+brain add home 3579 3580 --artifacts-host 192.168.1.42     # new instance
+brain update home --artifacts-host 192.168.1.42             # existing instance
+```
+
+If it still doesn't connect from another device, the host's firewall is the usual next
+culprit — it may need an inbound allow rule for the MCP/artifacts ports, however your OS
+manages that.

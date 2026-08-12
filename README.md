@@ -175,7 +175,7 @@ each container it creates. Inside the container itself:
 | `BRAIN_NAME` | Instance name, set automatically by `brain` |
 | `MCP_PORT` | Port for the `/mcp` endpoint and web UI, set automatically by `brain` |
 | `ARTIFACTS_PORT` | Port for serving stored artifacts, set automatically by `brain` |
-| `ARTIFACTS_HOST` | Override the host used when building artifact URLs |
+| `ARTIFACTS_HOST` | Host used when building artifact URLs — auto-detected from the host's LAN interfaces by `brain` on every `start`/`update` unless set explicitly via `--artifacts-host` (needed for [Tailscale access](docs/tailscale.md); [LAN access](docs/lan.md) usually needs nothing) |
 
 ## Development
 
