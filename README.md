@@ -173,6 +173,9 @@ under the hood (SQLite vs. LanceDB, sync vs. async indexing).
 - `agent_ping` / `agent_list` — presence announcements for active agents
 - `lock_acquire` / `lock_release` — TTL-based resource locks
 
+**Server**
+- `ui_url` — get this instance's web UI URL
+
 ## HTTP API
 
 Besides `/mcp` (the MCP transport), each instance exposes:

@@ -7,7 +7,7 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import express, { type Request, type Response } from 'express';
 import { db } from './db.ts';
 import type { MemoryRow, MemorySearchRow, ArtifactRow, AgentRow } from './db.ts';
-import { artifactsDir } from './artifacts.ts';
+import { artifactsDir, resolveHost } from './artifacts.ts';
 import { registerMemoryTools } from './memory.ts';
 import { registerArtifactTools } from './artifacts.ts';
 import { registerAgentTools } from './agents.ts';
@@ -44,6 +44,13 @@ function makeMcpServer(): McpServer {
   registerMemoryTools(server);
   registerArtifactTools(server);
   registerAgentTools(server);
+
+  server.registerTool(
+    'ui_url',
+    { description: 'Get the HTTP URL for this brain instance\'s web UI (browse and search memory, artifacts, and agent presence).', inputSchema: {} },
+    async () => ({ content: [{ type: 'text' as const, text: JSON.stringify({ url: `http://${resolveHost()}:${MCP_PORT}/ui` }) }] })
+  );
+
   return server;
 }
 
