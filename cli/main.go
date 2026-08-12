@@ -605,7 +605,7 @@ func cmdHelp() {
 		{"logs [name] [-f]", "Show logs (follow with -f)"},
 		{"add <name> <mcp> <art>", "Add a new instance (--tag/--image, --artifacts-host)"},
 		{"remove <name>", "Remove an instance (data volume preserved)"},
-		{"update [name]", "Pull the latest image and recreate instance(s)"},
+		{"update [name]", "Pull + recreate instance(s) (--tag/--image, --artifacts-host)"},
 		{"health [name]", "Hit health endpoint(s) directly"},
 		{"open [name]", "Open Web UI in browser"},
 		{"config", "Print MCP config for ~/.claude/settings.json"},
