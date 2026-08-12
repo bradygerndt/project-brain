@@ -219,8 +219,6 @@ each container it creates. Inside the container itself:
 
 ## Development
 
-See [WORKTREES.md](WORKTREES.md) for the branch/worktree convention used for feature work.
-
 **Server** (`src/`, TypeScript, runs natively via Node's built-in type-stripping — no build
 step):
 
