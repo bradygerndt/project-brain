@@ -9,13 +9,40 @@ warn() { echo -e "${Y}⚠${NC}  $1"; }
 die()  { echo -e "${R}✗${NC} $1" >&2; exit 1; }
 bold() { echo -e "${B}$1${NC}"; }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TARBALL_URL="https://github.com/bradygerndt/project-brain/archive/refs/heads/main.tar.gz"
+INSTALL_DIR="${BRAIN_INSTALL_DIR:-$HOME/project-brain}"
+
+if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+  SCRIPT_DIR=""
+fi
 BIN_DIR="${BRAIN_BIN_DIR:-$HOME/.local/bin}"
 BRAIN_LINK="$BIN_DIR/brain"
 
 echo ""
 bold "  project-brain installer"
 echo ""
+
+# ── Remote bootstrap ─────────────────────────────────────────────────────────
+# Ran via `curl | bash` — there's no local checkout yet, so fetch the source
+# as a tarball (no git required) and re-exec this same script from inside it.
+# Re-running this later re-fetches and overlays the source, updating the code
+# in place — .env, data/, and node_modules/ are gitignored so they're never
+# in the tarball and are left untouched.
+if [[ -z "$SCRIPT_DIR" || ! -f "$SCRIPT_DIR/package.json" ]]; then
+  if ! command -v curl &>/dev/null; then die "curl is required to install project-brain."; fi
+  if ! command -v tar &>/dev/null; then die "tar is required to install project-brain."; fi
+
+  info "Downloading project-brain into $INSTALL_DIR…"
+  TMP_DIR="$(mktemp -d)"
+  trap 'rm -rf "$TMP_DIR"' EXIT
+  curl -fsSL "$TARBALL_URL" | tar -xz --strip-components=1 -C "$TMP_DIR"
+  mkdir -p "$INSTALL_DIR"
+  cp -a "$TMP_DIR"/. "$INSTALL_DIR"/
+
+  exec bash "$INSTALL_DIR/install.sh"
+fi
 
 # ── Node.js ──────────────────────────────────────────────────────────────────
 if ! command -v node &>/dev/null; then
