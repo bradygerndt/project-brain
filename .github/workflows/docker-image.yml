@@ -4,6 +4,16 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+    # Path filters are ignored for tag pushes (a version tag always builds,
+    # regardless of what changed) — this only skips no-op runs on ordinary
+    # main-branch pushes that don't touch anything the image depends on.
+    paths:
+      - "src/**"
+      - "package.json"
+      - "package-lock.json"
+      - "Dockerfile"
+      - ".dockerignore"
+      - ".github/workflows/docker-image.yml"
 
 permissions:
   contents: read
