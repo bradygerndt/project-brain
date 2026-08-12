@@ -25,7 +25,13 @@ Runs in Docker, is managed through the `brain` CLI, and supports multiple indepe
 - [Docker](https://docs.docker.com/get-docker/) (the only thing needed to *run* the service —
   server images are pulled prebuilt from GHCR, never built locally)
 - `curl` and `tar` (to install the CLI — both are preinstalled on virtually every system)
-- An `ANTHROPIC_API_KEY` (only required for the `memory_extract` tool)
+- An `ANTHROPIC_API_KEY` — **optional.** The server runs fully without one; it's only used by
+  `memory_extract`, where *the server itself* (not your MCP client) makes its own separate
+  call to Claude Haiku to pull structured facts out of raw text — handy for importing a
+  meeting transcript or chat log, bulk-loading notes from a document, or letting a
+  non-agentic script (a cron job, a webhook receiver) ingest raw text without an LLM already
+  in the loop to decide what's worth keeping. Skip it and every other tool still works, you
+  just enter facts one at a time via `memory_set` instead of extracting many at once.
 
 The `brain` CLI is a standalone compiled binary — no Node.js, npm, or Go toolchain needed to
 install or run it. (Node is only used to build the server image in CI; contributors editing
@@ -44,7 +50,7 @@ needed. No repo checkout, no `git clone`, no package manager.
 
 Re-running the same command later upgrades the CLI to the newest release.
 
-After installing, add your Anthropic API key (only needed for `memory_extract`):
+Optional — add your Anthropic API key if you want `memory_extract` (skip this otherwise):
 
 ```bash
 $EDITOR ~/.config/brain/.env   # set ANTHROPIC_API_KEY=sk-ant-...
@@ -64,6 +70,11 @@ brain open         # open the web UI in your browser
 Add the printed config to `~/.claude/settings.json` under `"mcpServers"`, then restart Claude
 Code. A `home` instance is seeded automatically on first run, listening on MCP port `3579` and
 artifacts port `3580` — no config file to hand-edit.
+
+**More setups:**
+- [Connect a specific git project](docs/connect-a-project.md) — checked-in `.mcp.json` instead of personal settings
+- [Access over Tailscale](docs/tailscale.md) — reach your instance from other devices
+- [Access over your LAN](docs/lan.md) — same, without Tailscale
 
 ## `brain` CLI
 

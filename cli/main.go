@@ -200,6 +200,7 @@ func cmdStart(args []string) error {
 				CacheVolume:   state.CacheVolume,
 				InstanceName:  name,
 				AnthropicKey:  key,
+				ArtifactsHost: inst.ArtifactsHost,
 			}); err != nil {
 				ui.Err("%s: %s", name, err.Error())
 				continue
@@ -335,9 +336,10 @@ func cmdLogs(args []string) error {
 func cmdAdd(args []string) error {
 	args, tag := extractFlag(args, "--tag")
 	args, image := extractFlag(args, "--image")
+	args, artifactsHost := extractFlag(args, "--artifacts-host")
 
 	if len(args) < 3 {
-		return fmt.Errorf("usage: brain add <name> <mcp-port> <artifacts-port> [--tag T | --image I]\n       e.g.  brain add work 3589 3590")
+		return fmt.Errorf("usage: brain add <name> <mcp-port> <artifacts-port> [--tag T | --image I] [--artifacts-host HOST]\n       e.g.  brain add work 3589 3590\n       e.g.  brain add home 3579 3580 --artifacts-host 100.x.y.z   # Tailscale/LAN IP")
 	}
 	name, mcpStr, artStr := args[0], args[1], args[2]
 
@@ -362,6 +364,7 @@ func cmdAdd(args []string) error {
 		MCPPort:       mcpPort,
 		ArtifactsPort: artPort,
 		Image:         resolveImage(tag, image),
+		ArtifactsHost: artifactsHost,
 	}
 	if err := state.Save(s); err != nil {
 		return err
@@ -490,6 +493,7 @@ func cmdUpdate(args []string) error {
 	}
 	args, tag := extractFlag(args, "--tag")
 	args, image := extractFlag(args, "--image")
+	args, artifactsHost := extractFlag(args, "--artifacts-host")
 
 	s, err := loadSeeded()
 	if err != nil {
@@ -506,6 +510,10 @@ func cmdUpdate(args []string) error {
 		newImage := inst.Image
 		if tag != "" || image != "" {
 			newImage = resolveImage(tag, image)
+		}
+		if artifactsHost != "" && artifactsHost != inst.ArtifactsHost {
+			inst.ArtifactsHost = artifactsHost
+			changed = true
 		}
 
 		ui.Info("Updating brain-%s to %s…", name, newImage)
@@ -541,6 +549,7 @@ func cmdUpdate(args []string) error {
 			CacheVolume:   state.CacheVolume,
 			InstanceName:  name,
 			AnthropicKey:  key,
+			ArtifactsHost: inst.ArtifactsHost,
 		}); err != nil {
 			ui.Err("%s: %s", name, err.Error())
 			continue
@@ -573,7 +582,7 @@ func cmdHelp() {
 		{"restart [name]", "Restart instance(s)"},
 		{"ps", "List all instances and health status"},
 		{"logs [name] [-f]", "Show logs (follow with -f)"},
-		{"add <name> <mcp> <art>", "Add a new instance (--tag/--image to pick a server version)"},
+		{"add <name> <mcp> <art>", "Add a new instance (--tag/--image, --artifacts-host)"},
 		{"remove <name>", "Remove an instance (data volume preserved)"},
 		{"update [name]", "Pull the latest image and recreate instance(s)"},
 		{"health [name]", "Hit health endpoint(s) directly"},

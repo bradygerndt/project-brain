@@ -96,6 +96,7 @@ type CreateOpts struct {
 	CacheVolume   string
 	InstanceName  string // BRAIN_NAME env var
 	AnthropicKey  string // may be empty — only needed for memory_extract
+	ArtifactsHost string // may be empty — overrides the host in artifact URLs
 }
 
 // Create makes (but does not start) a container for an instance.
@@ -115,6 +116,9 @@ func Create(opts CreateOpts) error {
 	}
 	if opts.AnthropicKey != "" {
 		args = append(args, "-e", "ANTHROPIC_API_KEY="+opts.AnthropicKey)
+	}
+	if opts.ArtifactsHost != "" {
+		args = append(args, "-e", "ARTIFACTS_HOST="+opts.ArtifactsHost)
 	}
 	args = append(args, opts.Image)
 	_, err := run(args...)

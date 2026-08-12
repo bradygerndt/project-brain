@@ -19,6 +19,12 @@ type Instance struct {
 	MCPPort       int    `yaml:"mcpPort"`
 	ArtifactsPort int    `yaml:"artifactsPort"`
 	Image         string `yaml:"image"`
+	// ArtifactsHost overrides the host used in artifact URLs the server
+	// returns (e.g. a Tailscale hostname or LAN IP). Without it, the
+	// server falls back to the container's own network interface — which
+	// on Docker is an internal bridge IP unreachable from anywhere but
+	// the host itself.
+	ArtifactsHost string `yaml:"artifactsHost,omitempty"`
 }
 
 // State is the full instance registry.
