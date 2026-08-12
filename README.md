@@ -46,8 +46,9 @@ install or run it. (Node is only used to build the server image in CI; contribut
 curl -fsSL https://raw.githubusercontent.com/bradygerndt/project-brain/main/install.sh | bash
 ```
 
-(WSL presents as Linux, so this is the right one there too — see the
-[WSL note](#a-note-on-wsl) below before setting up LAN/Tailscale access.)
+(WSL presents as Linux, so this is the right one there too — running *inside* WSL changes how
+LAN/Tailscale access works, see [the WSL section](docs/lan.md#running-inside-wsl) before setting
+that up.)
 
 **Windows (native, PowerShell):**
 
@@ -71,17 +72,14 @@ $EDITOR ~/.config/brain/.env   # set ANTHROPIC_API_KEY=sk-ant-...
 
 (`%APPDATA%\brain\.env` on native Windows. Override the location with `BRAIN_CONFIG_DIR`.)
 
-### A note on WSL
-
-Native Windows `brain` sees your real network interfaces, so [LAN access](docs/lan.md) works
-automatically. Running `brain` *inside* WSL is different: WSL2's own network address sits
-behind Windows' NAT and isn't reachable from other devices, so `brain` detects this and falls
-back to `127.0.0.1` instead of guessing wrong — you'll need `--artifacts-host` with your
-Windows host's real LAN IP for [LAN](docs/lan.md)/[Tailscale](docs/tailscale.md) access from
-WSL. If you're on Windows mainly to use Docker Desktop, installing natively (above) sidesteps
-this entirely.
-
 ## Quick start
+
+**The overall flow:** each project-brain *instance* is a self-contained Docker container with
+its own memory (its own volume, its own MCP + artifacts ports). `brain start` boots the
+`home` instance seeded automatically on first run (MCP port `3579`, artifacts port `3580`), and
+`brain config` prints the block that tells Claude Code where to find it. From there you either
+connect `home` once and reuse it as one shared memory across every project, or give a
+particular project its own isolated instance — both are covered below.
 
 ```bash
 brain start        # start all instances (requires Docker)
@@ -91,8 +89,22 @@ brain open         # open the web UI in your browser
 ```
 
 Add the printed config to `~/.claude/settings.json` under `"mcpServers"`, then restart Claude
-Code. A `home` instance is seeded automatically on first run, listening on MCP port `3579` and
-artifacts port `3580` — no config file to hand-edit.
+Code. This connects `home` *personally* — every project you open in Claude Code on this
+machine will share its memory, which is fine as a default.
+
+**Adding a new project:** if you'd rather a project's memory stay isolated (its own facts, not
+mixed with unrelated work), or the whole team should share one instance via git instead of
+everyone running their own, give it a dedicated instance:
+
+```bash
+brain add work 3589 3590   # new instance "work" on its own ports/data volume
+brain start work
+brain config                # now prints both "home" and "work"
+```
+
+Then connect it — paste the new block into `~/.claude/settings.json` as above for personal use,
+or see [Connect a specific git project](docs/connect-a-project.md) to check the MCP config into
+the repo itself so it's automatic for anyone who clones it.
 
 **More setups:**
 - [Connect a specific git project](docs/connect-a-project.md) — checked-in `.mcp.json` instead of personal settings

@@ -19,12 +19,23 @@ Check `brain ps` or `docker inspect brain-<name> --format '{{.Config.Env}}'` (lo
 
 ## Running inside WSL
 
-If `brain` is running inside WSL (as opposed to natively on Windows — see the
-[Windows install section](../README.md#install)), auto-detection deliberately doesn't try to
-guess: WSL2's own network address sits behind Windows' NAT and isn't reachable from other
-devices on the LAN at all, even though it looks like a normal private IP from inside WSL.
-`brain` falls back to `127.0.0.1` there instead of confidently handing out a wrong address —
-find your Windows host's real LAN IP (`ipconfig` in Windows) and set it explicitly (see below).
+Native Windows `brain` sees the host's real network interfaces, so LAN access here works
+exactly as described above — no different from bare Linux or macOS. Running `brain` *inside*
+WSL is where this gets tricky: WSL2's own network address sits behind Windows' NAT and isn't
+reachable from other devices on the LAN at all, even though it looks like a normal private IP
+from inside WSL. Auto-detection deliberately doesn't try to guess here — `brain` falls back to
+`127.0.0.1` instead of confidently handing out a wrong address — find your Windows host's real
+LAN IP (`ipconfig` in Windows) and set it explicitly (see below). If you're on Windows mainly
+to use Docker Desktop, installing `brain` natively instead (see the
+[Windows install section](../README.md#install)) sidesteps this entirely.
+
+**Mirrored networking mode changes this.** WSL2's newer "mirrored" networking mode (opt-in —
+add `networkingMode=mirrored` under `[wsl2]` in `.wslconfig`; needs a recent Windows 11 build)
+drops the NAT layer: WSL shares the host's network interfaces directly instead of getting its
+own virtual one, so a WSL2-hosted `brain` sees the same LAN-reachable addresses Windows itself
+does, and auto-detection picks a real, working IP with no override needed. Run `hostname -I`
+inside WSL and compare against `ipconfig` on the Windows side — if the addresses already match,
+you're in mirrored mode and can skip the override below.
 
 ## If auto-detection picks the wrong address
 
