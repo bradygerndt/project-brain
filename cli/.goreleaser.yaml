@@ -29,3 +29,9 @@ changelog:
     exclude:
       - "^docs:"
       - "^test:"
+
+release:
+  footer: |
+    ---
+    **Server image:** `docker pull ghcr.io/bradygerndt/project-brain:{{ .Version }}`
+    ([package versions](https://github.com/bradygerndt/project-brain/pkgs/container/project-brain))
