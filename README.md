@@ -131,7 +131,7 @@ from `ghcr.io/bradygerndt/project-brain`.
 | `brain restart [name]` | Restart instance(s) |
 | `brain ps` | List all instances and health status |
 | `brain logs [name] [-f]` | Show logs (follow with `-f`) |
-| `brain add <name> <mcp-port> <artifacts-port>` | Register a new instance (`--tag`/`--image` to pick a server version) |
+| `brain add <name> <mcp-port> <artifacts-port>` | Register a new instance (`--tag`/`--image` to pick a server version, `--host` to register a [remote](#remote-instances) one instead) |
 | `brain remove <name>` | Remove an instance (data volume preserved) |
 | `brain update [name]` | Pull the latest (or `--tag`/`--image`-selected) server image and recreate instance(s) |
 | `brain health [name]` | Hit the health endpoint(s) directly |
@@ -165,6 +165,23 @@ brain update work --tag 1.3.0           # pin to a specific released version
 `edge` tracks `main`. Tagged releases publish `latest` plus the standard semver tiers —
 `1.3.0`, `1.3`, and `1` — all bare (no `v` prefix, the OCI/Docker convention), even though the
 CLI's own version and its git/release tags keep the `v` (the Go convention, e.g. `v1.3.0`).
+
+### Remote instances
+
+Every command above assumes `brain` manages the instance's container on this machine via
+Docker. `--host` registers the opposite: a pointer to an instance that's managed *elsewhere* —
+e.g. a laptop with `brain` installed only to reach a home server over Tailscale, never running
+Docker itself.
+
+```bash
+brain add work-remote 3589 3590 --host 100.x.y.z
+```
+
+This skips the image pull and local port checks (nothing is bound on this machine) and records
+the host instead. `brain ps`/`health` still check it over plain HTTP and label it `(remote)`;
+`start`/`stop`/`restart`/`logs`/`update` all refuse on it with a clear error, since there's no
+local container for them to act on. See [Access over Tailscale](docs/tailscale.md) for the full
+setup this is meant to pair with.
 
 ## MCP tools
 

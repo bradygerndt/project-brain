@@ -60,3 +60,18 @@ On any machine on your tailnet, point its MCP config at the Tailscale address in
 
 See [connect-a-project.md](connect-a-project.md) for where that block goes (project-scoped
 `.mcp.json` vs. personal settings).
+
+## 5. Optional: also install `brain` on the other device
+
+If the other device has `brain` installed too and you'd rather use `brain ps`/`brain config`
+there than hand-write the JSON above, register the host instance as a remote reference instead
+of typing its URL by hand:
+
+```bash
+brain add home 3579 3580 --host 100.101.102.103
+```
+
+This just records the host — `brain` never runs Docker for it, since there's nothing to manage
+locally. `brain start`/`stop`/`restart`/`logs`/`update` all refuse on a remote entry; `ps` and
+`health` still work since they're plain HTTP. See [README.md](../README.md#remote-instances)
+for the full behavior.

@@ -25,6 +25,17 @@ type Instance struct {
 	// on Docker is an internal bridge IP unreachable from anywhere but
 	// the host itself.
 	ArtifactsHost string `yaml:"artifactsHost,omitempty"`
+	// Host distinguishes a Docker-managed instance from a remote-reference
+	// one:
+	//   - Empty (default): Docker-managed on this host. Every URL uses
+	//     127.0.0.1, exactly today's behavior — nothing changes for
+	//     existing instances.
+	//   - Set: reference-only. This is just a remembered pointer to an
+	//     instance managed elsewhere (e.g. a laptop reaching a home
+	//     server over Tailscale). Every URL uses this host instead of
+	//     127.0.0.1, and `brain` never shells out to `docker` for it —
+	//     Image/ArtifactsHost are left unused. See RequireManaged.
+	Host string `yaml:"host,omitempty"`
 }
 
 // State is the full instance registry.
@@ -93,6 +104,24 @@ func DataVolume(name string) string {
 // used to prevent collisions with unrelated projects on the same host;
 // without compose, the name itself needs to be collision-resistant).
 const CacheVolume = "brain-hf-cache"
+
+// RequireManaged returns an error if inst is a remote-reference instance
+// (Host set) rather than one this brain manages via Docker. Every command
+// that shells out to `docker` for a specific instance — start/stop/
+// restart/logs/update, and backup/restore — must call this before running
+// any docker command, so a remote entry fails with a clear, specific error
+// instead of either a raw docker failure or (worse, for `update`) silently
+// standing up a brand-new local container under a name the user only meant
+// as a pointer elsewhere.
+//
+// verb is the action being refused, used in the trailing "nothing to
+// <verb>" clause (e.g. "start", "update", "show logs for").
+func RequireManaged(name string, inst *Instance, verb string) error {
+	if inst.Host != "" {
+		return fmt.Errorf("instance %q is remote (host: %s) — not managed by this brain, nothing to %s", name, inst.Host, verb)
+	}
+	return nil
+}
 
 // PortConflict returns the instance name already using mcpPort or
 // artifactsPort, if any, excluding `except`.
