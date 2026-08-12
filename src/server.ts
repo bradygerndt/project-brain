@@ -1,24 +1,28 @@
 import { randomUUID } from 'node:crypto';
-import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
-import express from 'express';
-import { db } from './db.js';
-import { artifactsDir } from './artifacts.js';
-import { registerMemoryTools } from './memory.js';
-import { registerArtifactTools } from './artifacts.js';
-import { registerAgentTools } from './agents.js';
+import express, { type Request, type Response } from 'express';
+import { db } from './db.ts';
+import type { MemoryRow, MemorySearchRow, ArtifactRow, AgentRow } from './db.ts';
+import { artifactsDir } from './artifacts.ts';
+import { registerMemoryTools } from './memory.ts';
+import { registerArtifactTools } from './artifacts.ts';
+import { registerAgentTools } from './agents.ts';
 
 const BRAIN_NAME = process.env.BRAIN_NAME ?? 'default';
 const MCP_PORT = parseInt(process.env.MCP_PORT ?? '3579', 10);
 const ARTIFACTS_PORT = parseInt(process.env.ARTIFACTS_PORT ?? '3580', 10);
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 // --- MCP server factory (one per session) ---
 
-function makeMcpServer() {
+function makeMcpServer(): McpServer {
   const server = new McpServer(
     { name: `project-brain-${BRAIN_NAME}`, version: '1.0.0' },
     { capabilities: { logging: {} } }
@@ -34,11 +38,11 @@ function makeMcpServer() {
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 
-const transports = new Map(); // sessionId -> StreamableHTTPServerTransport
+const transports = new Map<string, StreamableHTTPServerTransport>();
 
-app.post('/mcp', async (req, res) => {
+app.post('/mcp', async (req: Request, res: Response) => {
   try {
-    const sessionId = req.headers['mcp-session-id'];
+    const sessionId = req.headers['mcp-session-id'] as string | undefined;
     let transport = sessionId ? transports.get(sessionId) : undefined;
 
     if (!transport) {
@@ -57,13 +61,13 @@ app.post('/mcp', async (req, res) => {
     await transport.handleRequest(req, res, req.body);
   } catch (err) {
     console.error('[mcp] POST error:', err);
-    if (!res.headersSent) res.status(500).json({ error: err.message });
+    if (!res.headersSent) res.status(500).json({ error: errorMessage(err) });
   }
 });
 
-app.get('/mcp', async (req, res) => {
-  const sessionId = req.headers['mcp-session-id'];
-  const transport = transports.get(sessionId);
+app.get('/mcp', async (req: Request, res: Response) => {
+  const sessionId = req.headers['mcp-session-id'] as string | undefined;
+  const transport = sessionId ? transports.get(sessionId) : undefined;
   if (!transport) { res.status(404).json({ error: 'Session not found' }); return; }
   try {
     await transport.handleRequest(req, res);
@@ -72,91 +76,91 @@ app.get('/mcp', async (req, res) => {
   }
 });
 
-app.delete('/mcp', async (req, res) => {
-  const sessionId = req.headers['mcp-session-id'];
-  const transport = transports.get(sessionId);
+app.delete('/mcp', async (req: Request, res: Response) => {
+  const sessionId = req.headers['mcp-session-id'] as string | undefined;
+  const transport = sessionId ? transports.get(sessionId) : undefined;
   if (transport) {
     await transport.close().catch(() => {});
-    transports.delete(sessionId);
+    transports.delete(sessionId!);
   }
   res.json({ ok: true });
 });
 
 // --- REST API for the web UI ---
 
-app.get('/health', (_req, res) => {
+app.get('/health', (_req: Request, res: Response) => {
   res.json({ ok: true, brain: BRAIN_NAME, sessions: transports.size });
 });
 
-app.get('/api/memory', (req, res) => {
+app.get('/api/memory', (req: Request, res: Response) => {
   try {
     const { q, type = 'keyword', ns, limit = '20' } = req.query;
     if (!q) { res.json([]); return; }
-    const lim = Math.min(parseInt(limit, 10) || 20, 100);
+    const lim = Math.min(parseInt(String(limit), 10) || 20, 100);
 
     if (type === 'keyword') {
-      const params = [String(q)];
+      const params: (string | number)[] = [String(q)];
       let sql = `SELECT m.key, m.value, m.tags, m.namespace, m.source, m.updated_at,
                         snippet(memory_fts, 1, '[', ']', '...', 20) AS snippet
                  FROM memory m JOIN memory_fts f ON m.rowid = f.rowid
                  WHERE memory_fts MATCH ?`;
       if (ns) { sql += ' AND m.namespace = ?'; params.push(String(ns)); }
       sql += ' LIMIT ?'; params.push(lim);
-      const rows = db.prepare(sql).all(...params);
+      const rows = db.prepare(sql).all(...params) as unknown as MemorySearchRow[];
       res.json(rows.map(r => ({ ...r, tags: JSON.parse(r.tags) })));
     } else {
       // semantic search is async — handled via a dedicated endpoint
       res.status(400).json({ error: 'Use /api/memory/semantic for semantic search' });
     }
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: errorMessage(err) });
   }
 });
 
-app.get('/api/memory/semantic', async (req, res) => {
+app.get('/api/memory/semantic', async (req: Request, res: Response) => {
   try {
     const { q, ns, limit = '10' } = req.query;
     if (!q) { res.json([]); return; }
-    const lim = Math.min(parseInt(limit, 10) || 10, 50);
-    const { vectorSearch } = await import('./lance.js');
+    const lim = Math.min(parseInt(String(limit), 10) || 10, 50);
+    const { vectorSearch } = await import('./lance.ts');
     const hits = await vectorSearch(String(q), ns ? String(ns) : undefined, lim);
     const results = hits.map(h => {
-      const row = db.prepare('SELECT * FROM memory WHERE key = ? AND namespace = ?').get(h.key, h.namespace ?? 'default');
+      const row = db.prepare('SELECT * FROM memory WHERE key = ? AND namespace = ?').get(h.key, h.namespace ?? 'default') as MemoryRow | undefined;
       if (!row) return null;
       return { ...row, tags: JSON.parse(row.tags), _score: h._distance };
     }).filter(Boolean);
     res.json(results);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: errorMessage(err) });
   }
 });
 
-app.get('/api/memory/list', (req, res) => {
+app.get('/api/memory/list', (req: Request, res: Response) => {
   try {
     const { ns, tag, limit = '50', offset = '0' } = req.query;
     let sql = 'SELECT * FROM memory WHERE 1=1';
-    const params = [];
+    const params: (string | number)[] = [];
     if (ns) { sql += ' AND namespace = ?'; params.push(String(ns)); }
     if (tag) { sql += ' AND tags LIKE ?'; params.push(`%"${String(tag)}"%`); }
     sql += ' ORDER BY updated_at DESC LIMIT ? OFFSET ?';
-    params.push(Math.min(parseInt(limit, 10) || 50, 200), parseInt(offset, 10) || 0);
-    const rows = db.prepare(sql).all(...params);
+    params.push(Math.min(parseInt(String(limit), 10) || 50, 200), parseInt(String(offset), 10) || 0);
+    const rows = db.prepare(sql).all(...params) as unknown as MemoryRow[];
     res.json(rows.map(r => ({ ...r, tags: JSON.parse(r.tags) })));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: errorMessage(err) });
   }
 });
 
-app.get('/api/artifacts', (req, res) => {
+app.get('/api/artifacts', (req: Request, res: Response) => {
   try {
     const { tag, limit = '50', offset = '0' } = req.query;
     const APORT = process.env.ARTIFACTS_PORT ?? '3580';
     let sql = 'SELECT * FROM artifacts WHERE 1=1';
-    const params = [];
+    const params: (string | number)[] = [];
     if (tag) { sql += ' AND tags LIKE ?'; params.push(`%"${String(tag)}"%`); }
     sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
-    params.push(Math.min(parseInt(limit, 10) || 50, 200), parseInt(offset, 10) || 0);
-    const rows = db.prepare(sql).all(...params);
+    params.push(Math.min(parseInt(String(limit), 10) || 50, 200), parseInt(String(offset), 10) || 0);
+    const rows = db.prepare(sql).all(...params) as unknown as ArtifactRow[];
     const getHost = () => process.env.ARTIFACTS_HOST ?? '127.0.0.1';
     res.json(rows.map(r => ({
       ...r,
@@ -164,11 +168,11 @@ app.get('/api/artifacts', (req, res) => {
       url: `http://${getHost()}:${APORT}/artifacts/${r.id}/${r.filename}`
     })));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: errorMessage(err) });
   }
 });
 
-app.post('/api/memory', (req, res) => {
+app.post('/api/memory', (req: Request, res: Response) => {
   try {
     const { key, value, tags = [], namespace = 'default', source } = req.body;
     if (!key || !value) { res.status(400).json({ error: 'key and value are required' }); return; }
@@ -182,27 +186,27 @@ app.post('/api/memory', (req, res) => {
       db.prepare('INSERT INTO memory(key, value, tags, namespace, source, created_at, updated_at) VALUES(?,?,?,?,?,?,?)')
         .run(key, value, tagsJson, namespace, source ?? 'manual', now, now);
     }
-    setImmediate(async () => { const { vectorUpsert } = await import('./lance.js'); vectorUpsert(key, namespace, value); });
+    setImmediate(async () => { const { vectorUpsert } = await import('./lance.ts'); vectorUpsert(key, namespace, value); });
     res.json({ ok: true });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: errorMessage(err) });
   }
 });
 
-app.get('/api/agents', (req, res) => {
+app.get('/api/agents', (_req: Request, res: Response) => {
   try {
     const now = Date.now();
     db.prepare('DELETE FROM agents WHERE expires_at <= ?').run(now);
-    res.json(db.prepare('SELECT * FROM agents ORDER BY updated_at DESC').all());
+    res.json(db.prepare('SELECT * FROM agents ORDER BY updated_at DESC').all() as unknown as AgentRow[]);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: errorMessage(err) });
   }
 });
 
 // Serve the web UI
 const uiPath = resolve(import.meta.dirname, 'ui', 'index.html');
-app.get('/ui', (_req, res) => res.sendFile(uiPath));
-app.get('/', (_req, res) => res.redirect('/ui'));
+app.get('/ui', (_req: Request, res: Response) => res.sendFile(uiPath));
+app.get('/', (_req: Request, res: Response) => res.redirect('/ui'));
 
 app.listen(MCP_PORT, '0.0.0.0', () => {
   console.log(`[brain:${BRAIN_NAME}] MCP server → http://0.0.0.0:${MCP_PORT}/mcp`);

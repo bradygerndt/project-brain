@@ -14,4 +14,4 @@ RUN mkdir -p /app/data/artifacts
 
 EXPOSE 3579 3580
 
-CMD ["node", "src/server.js"]
+CMD ["node", "src/server.ts"]

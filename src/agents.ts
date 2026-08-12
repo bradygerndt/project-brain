@@ -1,7 +1,9 @@
 import { z } from 'zod';
-import { db } from './db.js';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { db } from './db.ts';
+import type { AgentRow, LockRow } from './db.ts';
 
-export function registerAgentTools(server) {
+export function registerAgentTools(server: McpServer) {
   server.tool(
     'agent_ping',
     'Announce presence and current activity. Returns the list of all currently active agents.',
@@ -24,8 +26,8 @@ export function registerAgentTools(server) {
           updated_at=excluded.updated_at
       `).run(agent_id, status, focus ?? null, expires_at, now);
 
-      const agents = db.prepare('SELECT * FROM agents WHERE expires_at > ? ORDER BY updated_at DESC').all(now);
-      return { content: [{ type: 'text', text: JSON.stringify(agents) }] };
+      const agents = db.prepare('SELECT * FROM agents WHERE expires_at > ? ORDER BY updated_at DESC').all(now) as unknown as AgentRow[];
+      return { content: [{ type: 'text' as const, text: JSON.stringify(agents) }] };
     }
   );
 
@@ -36,8 +38,8 @@ export function registerAgentTools(server) {
     async () => {
       const now = Date.now();
       db.prepare('DELETE FROM agents WHERE expires_at <= ?').run(now);
-      const agents = db.prepare('SELECT * FROM agents ORDER BY updated_at DESC').all();
-      return { content: [{ type: 'text', text: JSON.stringify(agents) }] };
+      const agents = db.prepare('SELECT * FROM agents ORDER BY updated_at DESC').all() as unknown as AgentRow[];
+      return { content: [{ type: 'text' as const, text: JSON.stringify(agents) }] };
     }
   );
 
@@ -62,11 +64,11 @@ export function registerAgentTools(server) {
       `).run(resource, agent_id, expires_at, now);
 
       if (result.changes > 0) {
-        return { content: [{ type: 'text', text: JSON.stringify({ acquired: true, resource, agent_id, expires_at }) }] };
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ acquired: true, resource, agent_id, expires_at }) }] };
       }
 
-      const held = db.prepare('SELECT agent_id, expires_at FROM locks WHERE resource = ?').get(resource);
-      return { content: [{ type: 'text', text: JSON.stringify({ acquired: false, held_by: held?.agent_id, expires_at: held?.expires_at }) }] };
+      const held = db.prepare('SELECT agent_id, expires_at FROM locks WHERE resource = ?').get(resource) as LockRow | undefined;
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ acquired: false, held_by: held?.agent_id, expires_at: held?.expires_at }) }] };
     }
   );
 
@@ -79,7 +81,7 @@ export function registerAgentTools(server) {
     },
     async ({ resource, agent_id }) => {
       const result = db.prepare('DELETE FROM locks WHERE resource = ? AND agent_id = ?').run(resource, agent_id);
-      return { content: [{ type: 'text', text: JSON.stringify({ released: result.changes > 0 }) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ released: result.changes > 0 }) }] };
     }
   );
 }

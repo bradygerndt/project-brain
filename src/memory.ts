@@ -1,9 +1,11 @@
 import { z } from 'zod';
-import { db } from './db.js';
-import { vectorUpsert, vectorDelete, vectorSearch } from './lance.js';
-import { extractFacts } from './extract.js';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { db } from './db.ts';
+import type { MemoryRow, MemorySearchRow } from './db.ts';
+import { vectorUpsert, vectorDelete, vectorSearch } from './lance.ts';
+import { extractFacts } from './extract.ts';
 
-export function registerMemoryTools(server) {
+export function registerMemoryTools(server: McpServer) {
   server.tool(
     'memory_set',
     'Store or update a memory entry. Also indexes for semantic search.',
@@ -31,7 +33,7 @@ export function registerMemoryTools(server) {
       }
 
       setImmediate(() => vectorUpsert(key, namespace, search_text ?? value));
-      return { content: [{ type: 'text', text: JSON.stringify({ ok: true, key, namespace, updated: !!existing }) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, key, namespace, updated: !!existing }) }] };
     }
   );
 
@@ -43,9 +45,9 @@ export function registerMemoryTools(server) {
       namespace: z.string().optional(),
     },
     async ({ key, namespace = 'default' }) => {
-      const row = db.prepare('SELECT * FROM memory WHERE key = ? AND namespace = ?').get(key, namespace);
-      if (!row) return { content: [{ type: 'text', text: 'null' }] };
-      return { content: [{ type: 'text', text: JSON.stringify({ ...row, tags: JSON.parse(row.tags) }) }] };
+      const row = db.prepare('SELECT * FROM memory WHERE key = ? AND namespace = ?').get(key, namespace) as MemoryRow | undefined;
+      if (!row) return { content: [{ type: 'text' as const, text: 'null' }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ ...row, tags: JSON.parse(row.tags) }) }] };
     }
   );
 
@@ -58,7 +60,7 @@ export function registerMemoryTools(server) {
       limit: z.number().int().positive().optional(),
     },
     async ({ query, namespace, limit = 20 }) => {
-      const params = [query];
+      const params: (string | number)[] = [query];
       let sql = `
         SELECT m.key, m.value, m.tags, m.namespace, m.source, m.updated_at,
                snippet(memory_fts, 1, '[', ']', '...', 20) AS snippet
@@ -69,9 +71,9 @@ export function registerMemoryTools(server) {
       sql += ' LIMIT ?';
       params.push(limit);
 
-      const rows = db.prepare(sql).all(...params);
+      const rows = db.prepare(sql).all(...params) as unknown as MemorySearchRow[];
       const results = rows.map(r => ({ ...r, tags: JSON.parse(r.tags) }));
-      return { content: [{ type: 'text', text: JSON.stringify(results) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(results) }] };
     }
   );
 
@@ -86,11 +88,11 @@ export function registerMemoryTools(server) {
     async ({ query, namespace, limit = 10 }) => {
       const hits = await vectorSearch(query, namespace, limit);
       const results = hits.map(h => {
-        const row = db.prepare('SELECT * FROM memory WHERE key = ? AND namespace = ?').get(h.key, h.namespace ?? namespace ?? 'default');
+        const row = db.prepare('SELECT * FROM memory WHERE key = ? AND namespace = ?').get(h.key, h.namespace ?? namespace ?? 'default') as MemoryRow | undefined;
         if (!row) return null;
         return { ...row, tags: JSON.parse(row.tags), _score: h._distance };
       }).filter(Boolean);
-      return { content: [{ type: 'text', text: JSON.stringify(results) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(results) }] };
     }
   );
 
@@ -105,13 +107,13 @@ export function registerMemoryTools(server) {
     },
     async ({ namespace, tag, limit = 50, offset = 0 }) => {
       let sql = 'SELECT * FROM memory WHERE 1=1';
-      const params = [];
+      const params: (string | number)[] = [];
       if (namespace) { sql += ' AND namespace = ?'; params.push(namespace); }
       if (tag) { sql += ' AND tags LIKE ?'; params.push(`%"${tag}"%`); }
       sql += ' ORDER BY updated_at DESC LIMIT ? OFFSET ?';
       params.push(limit, offset);
-      const rows = db.prepare(sql).all(...params);
-      return { content: [{ type: 'text', text: JSON.stringify(rows.map(r => ({ ...r, tags: JSON.parse(r.tags) }))) }] };
+      const rows = db.prepare(sql).all(...params) as unknown as MemoryRow[];
+      return { content: [{ type: 'text' as const, text: JSON.stringify(rows.map(r => ({ ...r, tags: JSON.parse(r.tags) }))) }] };
     }
   );
 
@@ -125,7 +127,7 @@ export function registerMemoryTools(server) {
     async ({ key, namespace = 'default' }) => {
       const result = db.prepare('DELETE FROM memory WHERE key = ? AND namespace = ?').run(key, namespace);
       setImmediate(() => vectorDelete(key));
-      return { content: [{ type: 'text', text: JSON.stringify({ deleted: result.changes > 0 }) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ deleted: result.changes > 0 }) }] };
     }
   );
 
@@ -140,7 +142,7 @@ export function registerMemoryTools(server) {
     async ({ text, namespace = 'default', context }) => {
       const facts = await extractFacts(text, context);
       const now = Date.now();
-      const stored = [];
+      const stored: { key: string; value: string; tags: string[] }[] = [];
 
       for (const { key, value, tags = [] } of facts) {
         const tagsJson = JSON.stringify(tags);
@@ -156,7 +158,7 @@ export function registerMemoryTools(server) {
         stored.push({ key, value, tags });
       }
 
-      return { content: [{ type: 'text', text: JSON.stringify({ extracted: stored.length, facts: stored }) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ extracted: stored.length, facts: stored }) }] };
     }
   );
 }

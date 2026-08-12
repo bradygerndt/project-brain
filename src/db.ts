@@ -2,6 +2,47 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+export interface MemoryRow {
+  key: string;
+  value: string;
+  tags: string;
+  namespace: string;
+  source: string | null;
+  created_at: number;
+  updated_at: number;
+  search_text: string | null;
+}
+
+export interface MemorySearchRow extends MemoryRow {
+  snippet: string;
+}
+
+export interface ArtifactRow {
+  id: string;
+  name: string;
+  mime_type: string;
+  filename: string;
+  size_bytes: number;
+  tags: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface AgentRow {
+  agent_id: string;
+  status: string;
+  focus: string | null;
+  expires_at: number;
+  updated_at: number;
+}
+
+export interface LockRow {
+  resource: string;
+  agent_id: string;
+  expires_at: number;
+  acquired_at: number;
+}
+
 const dataDir = process.env.DATA_DIR
   ? resolve(process.env.DATA_DIR)
   : resolve(import.meta.dirname, '..', 'data');

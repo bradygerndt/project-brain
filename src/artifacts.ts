@@ -2,29 +2,31 @@ import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { resolve, extname } from 'node:path';
-import { db, dataPath } from './db.js';
+import { db, dataPath } from './db.ts';
+import type { ArtifactRow } from './db.ts';
 import { networkInterfaces } from 'node:os';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 export const artifactsDir = resolve(dataPath, 'artifacts');
 
-function artifactHost() {
+function artifactHost(): string {
   const override = process.env.ARTIFACTS_HOST;
   if (override) return override;
   const nets = networkInterfaces();
   for (const ifaces of Object.values(nets)) {
-    for (const iface of ifaces) {
+    for (const iface of ifaces ?? []) {
       if (!iface.internal && iface.family === 'IPv4') return iface.address;
     }
   }
   return '127.0.0.1';
 }
 
-function artifactUrl(id, filename) {
+function artifactUrl(id: string, filename: string): string {
   const port = process.env.ARTIFACTS_PORT ?? '3580';
   return `http://${artifactHost()}:${port}/artifacts/${id}/${filename}`;
 }
 
-function safeFilename(name, mimeType) {
+function safeFilename(name: string, mimeType: string): string {
   const base = name.replace(/[^a-z0-9._-]/gi, '_').replace(/_{2,}/g, '_').slice(0, 100);
   if (extname(base)) return base;
   const ext = mimeType === 'text/html' ? '.html'
@@ -35,7 +37,7 @@ function safeFilename(name, mimeType) {
   return base + ext;
 }
 
-export function registerArtifactTools(server) {
+export function registerArtifactTools(server: McpServer) {
   server.tool(
     'artifact_write',
     'Store a file artifact (HTML, image, JSON, etc.). Returns the artifact id and HTTP URL.',
@@ -60,7 +62,7 @@ export function registerArtifactTools(server) {
         'INSERT INTO artifacts(id, name, mime_type, filename, size_bytes, tags, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)'
       ).run(id, name, mime_type, filename, buf.byteLength, JSON.stringify(tags), now, now);
 
-      return { content: [{ type: 'text', text: JSON.stringify({ id, url: artifactUrl(id, filename) }) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ id, url: artifactUrl(id, filename) }) }] };
     }
   );
 
@@ -69,8 +71,8 @@ export function registerArtifactTools(server) {
     'Read the content of a stored artifact.',
     { id: z.string() },
     async ({ id }) => {
-      const row = db.prepare('SELECT * FROM artifacts WHERE id = ?').get(id);
-      if (!row) return { content: [{ type: 'text', text: 'null' }] };
+      const row = db.prepare('SELECT * FROM artifacts WHERE id = ?').get(id) as ArtifactRow | undefined;
+      if (!row) return { content: [{ type: 'text' as const, text: 'null' }] };
 
       const filePath = resolve(artifactsDir, id, row.filename);
       const buf = readFileSync(filePath);
@@ -78,7 +80,7 @@ export function registerArtifactTools(server) {
       const encoding = isText ? 'utf8' : 'base64';
       const content = isText ? buf.toString('utf8') : buf.toString('base64');
 
-      return { content: [{ type: 'text', text: JSON.stringify({ ...row, tags: JSON.parse(row.tags), content, encoding }) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ ...row, tags: JSON.parse(row.tags), content, encoding }) }] };
     }
   );
 
@@ -92,15 +94,15 @@ export function registerArtifactTools(server) {
     },
     async ({ tag, limit = 50, offset = 0 }) => {
       let sql = 'SELECT id, name, mime_type, filename, size_bytes, tags, created_at, updated_at FROM artifacts WHERE 1=1';
-      const params = [];
+      const params: (string | number)[] = [];
       if (tag) { sql += ' AND tags LIKE ?'; params.push(`%"${tag}"%`); }
       sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
       params.push(limit, offset);
-      const rows = db.prepare(sql).all(...params);
+      const rows = db.prepare(sql).all(...params) as unknown as ArtifactRow[];
       const results = rows.map(r => ({
         ...r, tags: JSON.parse(r.tags), url: artifactUrl(r.id, r.filename)
       }));
-      return { content: [{ type: 'text', text: JSON.stringify(results) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(results) }] };
     }
   );
 
@@ -109,9 +111,9 @@ export function registerArtifactTools(server) {
     'Get the HTTP URL for an artifact without reading its content.',
     { id: z.string() },
     async ({ id }) => {
-      const row = db.prepare('SELECT filename FROM artifacts WHERE id = ?').get(id);
-      if (!row) return { content: [{ type: 'text', text: 'null' }] };
-      return { content: [{ type: 'text', text: JSON.stringify({ url: artifactUrl(id, row.filename) }) }] };
+      const row = db.prepare('SELECT filename FROM artifacts WHERE id = ?').get(id) as Pick<ArtifactRow, 'filename'> | undefined;
+      if (!row) return { content: [{ type: 'text' as const, text: 'null' }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ url: artifactUrl(id, row.filename) }) }] };
     }
   );
 }

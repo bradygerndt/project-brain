@@ -1,22 +1,31 @@
 import * as lancedb from '@lancedb/lancedb';
-import { pipeline } from '@huggingface/transformers';
+import type { Connection, Table } from '@lancedb/lancedb';
+import { pipeline, type FeatureExtractionPipeline } from '@huggingface/transformers';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { dataPath } from './db.js';
+import { dataPath } from './db.ts';
+
+export interface VectorHit {
+  key: string;
+  namespace: string;
+  text: string;
+  updated_at: number;
+  _distance: number;
+}
 
 const vectorsDir = resolve(dataPath, 'vectors');
 mkdirSync(vectorsDir, { recursive: true });
 
-let ldb;
-let table;
-let embedder;
+let ldb: Connection | undefined;
+let table: Table | undefined;
+let embedder: FeatureExtractionPipeline | undefined;
 
-async function getDb() {
+async function getDb(): Promise<Connection> {
   ldb ??= await lancedb.connect(vectorsDir);
   return ldb;
 }
 
-async function getTable() {
+async function getTable(): Promise<Table> {
   if (table) return table;
   const db = await getDb();
   const names = await db.tableNames();
@@ -31,15 +40,15 @@ async function getTable() {
   return table;
 }
 
-export async function embed(text) {
+export async function embed(text: string): Promise<number[]> {
   if (!embedder) {
     embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
   }
   const out = await embedder(text, { pooling: 'mean', normalize: true });
-  return Array.from(out.data);
+  return Array.from(out.data as ArrayLike<number>);
 }
 
-export async function vectorUpsert(key, namespace, text) {
+export async function vectorUpsert(key: string, namespace: string, text: string): Promise<void> {
   try {
     const tbl = await getTable();
     const vector = await embed(text);
@@ -48,20 +57,20 @@ export async function vectorUpsert(key, namespace, text) {
       .whenNotMatchedInsertAll()
       .execute([{ key, namespace, vector, text, updated_at: Date.now() }]);
   } catch (err) {
-    console.error('[lance] upsert failed:', err.message);
+    console.error('[lance] upsert failed:', err instanceof Error ? err.message : err);
   }
 }
 
-export async function vectorDelete(key) {
+export async function vectorDelete(key: string): Promise<void> {
   try {
     const tbl = await getTable();
     await tbl.delete(`key = '${key.replace(/'/g, "''")}'`);
   } catch (err) {
-    console.error('[lance] delete failed:', err.message);
+    console.error('[lance] delete failed:', err instanceof Error ? err.message : err);
   }
 }
 
-export async function vectorSearch(query, namespace, limit = 10) {
+export async function vectorSearch(query: string, namespace?: string, limit = 10): Promise<VectorHit[]> {
   try {
     const tbl = await getTable();
     const vector = await embed(query);
@@ -69,9 +78,9 @@ export async function vectorSearch(query, namespace, limit = 10) {
     if (namespace) {
       search = search.where(`namespace = '${namespace.replace(/'/g, "''")}'`);
     }
-    return await search.toArray();
+    return await search.toArray() as unknown as VectorHit[];
   } catch (err) {
-    console.error('[lance] search failed:', err.message);
+    console.error('[lance] search failed:', err instanceof Error ? err.message : err);
     return [];
   }
 }
