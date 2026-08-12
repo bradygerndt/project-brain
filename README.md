@@ -113,15 +113,17 @@ Embedding-model weights are cached in one volume shared across all instances.
 ### Server versions
 
 A fresh `brain` install defaults new instances to the image matching its own release (e.g.
-CLI `v1.2.0` → `ghcr.io/bradygerndt/project-brain:v1.2.0`), so a clean install always gets a
+CLI `v1.2.0` → `ghcr.io/bradygerndt/project-brain:1.2.0`), so a clean install always gets a
 version it was actually tested against. Override per instance:
 
 ```bash
 brain add work 3589 3590 --tag edge     # track the latest main-branch build
-brain update work --tag v1.3.0          # pin to a specific released version
+brain update work --tag 1.3.0           # pin to a specific released version
 ```
 
-`edge` tracks `main`; `latest` and `vX.Y.Z` are only ever published on tagged releases.
+`edge` tracks `main`. Tagged releases publish `latest` plus the standard semver tiers —
+`1.3.0`, `1.3`, and `1` — all bare (no `v` prefix, the OCI/Docker convention), even though the
+CLI's own version and its git/release tags keep the `v` (the Go convention, e.g. `v1.3.0`).
 
 ## MCP tools
 
@@ -203,5 +205,5 @@ go run . help
 ```
 
 CI publishes the server image to GHCR on every push to `main` (tag `edge`) and on version
-tags (`vX.Y.Z` + `latest`), and cross-compiles `brain` releases via GoReleaser on version tags
-— see `.github/workflows/`.
+tags (bare semver + `latest`), and cross-compiles `brain` releases via GoReleaser on version
+tags — see `.github/workflows/`.
