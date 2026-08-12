@@ -1,0 +1,25 @@
+# Dev-only: builds the server from local source instead of pulling the
+# published ghcr.io/bradygerndt/project-brain image. Not used by `brain`
+# (the Go CLI) or by the install path — this is purely a contributor
+# convenience for iterating on src/.
+#
+#   docker compose -f docker-compose.dev.yml up --build
+#
+services:
+  brain-dev:
+    build: .
+    restart: unless-stopped
+    ports:
+      - 3579:3579
+      - 3580:3580
+    volumes:
+      - brain-dev-data:/app/data
+      - brain-hf-cache:/root/.cache/huggingface
+    environment:
+      BRAIN_NAME: dev
+      MCP_PORT: 3579
+      ARTIFACTS_PORT: 3580
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+volumes:
+  brain-dev-data: null
+  brain-hf-cache: null

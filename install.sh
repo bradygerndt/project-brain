@@ -9,72 +9,58 @@ warn() { echo -e "${Y}⚠${NC}  $1"; }
 die()  { echo -e "${R}✗${NC} $1" >&2; exit 1; }
 bold() { echo -e "${B}$1${NC}"; }
 
-TARBALL_URL="https://github.com/bradygerndt/project-brain/archive/refs/heads/main.tar.gz"
-INSTALL_DIR="${BRAIN_INSTALL_DIR:-$HOME/project-brain}"
-
-if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-else
-  SCRIPT_DIR=""
-fi
+REPO="bradygerndt/project-brain"
 BIN_DIR="${BRAIN_BIN_DIR:-$HOME/.local/bin}"
-BRAIN_LINK="$BIN_DIR/brain"
+BRAIN_BIN="$BIN_DIR/brain"
 
 echo ""
 bold "  project-brain installer"
 echo ""
 
-# ── Remote bootstrap ─────────────────────────────────────────────────────────
-# Ran via `curl | bash` — there's no local checkout yet, so fetch the source
-# as a tarball (no git required) and re-exec this same script from inside it.
-# Re-running this later re-fetches and overlays the source, updating the code
-# in place — .env, data/, and node_modules/ are gitignored so they're never
-# in the tarball and are left untouched.
-if [[ -z "$SCRIPT_DIR" || ! -f "$SCRIPT_DIR/package.json" ]]; then
-  if ! command -v curl &>/dev/null; then die "curl is required to install project-brain."; fi
-  if ! command -v tar &>/dev/null; then die "tar is required to install project-brain."; fi
+# ── Requirements ─────────────────────────────────────────────────────────────
+command -v curl &>/dev/null || die "curl is required to install project-brain."
+command -v tar &>/dev/null || die "tar is required to install project-brain."
 
-  info "Downloading project-brain into $INSTALL_DIR…"
-  TMP_DIR="$(mktemp -d)"
-  trap 'rm -rf "$TMP_DIR"' EXIT
-  curl -fsSL "$TARBALL_URL" | tar -xz --strip-components=1 -C "$TMP_DIR"
-  mkdir -p "$INSTALL_DIR"
-  cp -a "$TMP_DIR"/. "$INSTALL_DIR"/
+# ── Detect platform ──────────────────────────────────────────────────────────
+case "$(uname -s)" in
+  Linux)  OS=linux ;;
+  Darwin) OS=darwin ;;
+  *) die "Unsupported OS: $(uname -s). See https://github.com/$REPO/releases for manual builds." ;;
+esac
 
-  exec bash "$INSTALL_DIR/install.sh"
-fi
+case "$(uname -m)" in
+  x86_64|amd64)  ARCH=amd64 ;;
+  arm64|aarch64) ARCH=arm64 ;;
+  *) die "Unsupported architecture: $(uname -m). See https://github.com/$REPO/releases for manual builds." ;;
+esac
+info "Detected $OS/$ARCH"
 
-# ── Node.js ──────────────────────────────────────────────────────────────────
-if ! command -v node &>/dev/null; then
-  die "Node.js is required but not found. Install it via nvm or https://nodejs.org"
-fi
-NODE_VER=$(node -e "process.stdout.write(process.versions.node)")
-info "Node.js $NODE_VER"
+# ── Resolve latest release ───────────────────────────────────────────────────
+info "Looking up latest release…"
+TAG=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
+  | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
+[[ -n "$TAG" ]] || die "Couldn't resolve the latest release. Check https://github.com/$REPO/releases"
+info "Latest release: $TAG"
 
-# ── Dependencies ──────────────────────────────────────────────────────────────
-info "Installing npm dependencies…"
-cd "$SCRIPT_DIR"
-npm install --silent
-ok "Dependencies ready"
+# ── Download the matching binary ─────────────────────────────────────────────
+ASSET="brain_${OS}_${ARCH}.tar.gz"
+URL="https://github.com/$REPO/releases/download/$TAG/$ASSET"
 
-# ── Symlink ──────────────────────────────────────────────────────────────────
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+info "Downloading $ASSET…"
+curl -fsSL "$URL" -o "$TMP_DIR/$ASSET" || die "Download failed: $URL"
+tar -xzf "$TMP_DIR/$ASSET" -C "$TMP_DIR" brain
+
 mkdir -p "$BIN_DIR"
-chmod +x "$SCRIPT_DIR/bin/brain.js"
-ln -sf "$SCRIPT_DIR/bin/brain.js" "$BRAIN_LINK"
-ok "brain → $BRAIN_LINK"
+mv "$TMP_DIR/brain" "$BRAIN_BIN"
+chmod +x "$BRAIN_BIN"
+ok "brain → $BRAIN_BIN"
 
-# Verify the symlink actually resolves to the right place
-RESOLVED=$(node -e "import('node:url').then(u=>import('node:path').then(p=>console.log(p.resolve(p.dirname(u.fileURLToPath(import.meta.url)),'..')))).catch(()=>{})" \
-  --input-type=module < /dev/null 2>/dev/null || true)
-# Quick sanity check: run the binary through the symlink
-if ! "$BRAIN_LINK" help &>/dev/null; then
-  warn "Symlink test failed — falling back to wrapper script"
-  cat > "$BRAIN_LINK" <<WRAPPER
-#!/usr/bin/env bash
-exec node "$SCRIPT_DIR/bin/brain.js" "\$@"
-WRAPPER
-  chmod +x "$BRAIN_LINK"
-  ok "Wrapper script installed at $BRAIN_LINK"
+# Sanity check
+if ! "$BRAIN_BIN" version &>/dev/null; then
+  die "Installed binary failed to run — see $BRAIN_BIN"
 fi
 
 # ── PATH check ───────────────────────────────────────────────────────────────
@@ -88,8 +74,16 @@ if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
   fi
 
   if [[ -n "$SHELL_RC" ]]; then
-    read -rp "  Add it to $SHELL_RC automatically? [Y/n] " REPLY
-    REPLY="${REPLY:-Y}"
+    # stdin isn't a TTY under `curl | bash` (it's occupied by the piped
+    # script itself), so `read` can't prompt there — default to Y rather
+    # than let a failed read abort the rest of the install under set -e.
+    if [[ -t 0 ]]; then
+      read -rp "  Add it to $SHELL_RC automatically? [Y/n] " REPLY
+      REPLY="${REPLY:-Y}"
+    else
+      REPLY="Y"
+      info "Non-interactive install — adding to PATH automatically"
+    fi
     if [[ "$REPLY" =~ ^[Yy]$ ]]; then
       echo '' >> "$SHELL_RC"
       echo '# project-brain CLI' >> "$SHELL_RC"
@@ -111,10 +105,14 @@ else
   ok "$BIN_DIR is already in PATH"
 fi
 
-# ── .env ─────────────────────────────────────────────────────────────────────
-ENV_FILE="$SCRIPT_DIR/.env"
+# ── ~/.config/brain/.env ─────────────────────────────────────────────────────
+# No local checkout exists anymore, so this can't live next to a compose
+# file — brain itself loads it from here before creating any container.
+CONFIG_DIR="${BRAIN_CONFIG_DIR:-$HOME/.config/brain}"
+ENV_FILE="$CONFIG_DIR/.env"
 if [[ ! -f "$ENV_FILE" ]]; then
-  cp "$SCRIPT_DIR/.env.example" "$ENV_FILE"
+  mkdir -p "$CONFIG_DIR"
+  printf 'ANTHROPIC_API_KEY=\n' > "$ENV_FILE"
   warn ".env created — edit $ENV_FILE and add your ANTHROPIC_API_KEY"
   warn "(only needed for the memory_extract tool)"
 else

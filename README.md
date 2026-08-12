@@ -17,44 +17,40 @@ Runs in Docker, is managed through the `brain` CLI, and supports multiple indepe
 - **Agent coordination** — presence pings (`agent_ping`/`agent_list`) and resource locks
   (`lock_acquire`/`lock_release`) for multiple agents sharing one project.
 - **Web UI** — browse memory and artifacts at `http://<host>:<mcp-port>/ui`.
-- **Multi-instance** — run several named brains (different ports/data volumes) from one
-  `docker-compose.yml`, managed with the `brain` CLI.
+- **Multi-instance** — run several named brains (different ports/data volumes), managed with
+  the `brain` CLI.
 
 ## Requirements
 
-- [Node.js](https://nodejs.org) 20+
-- [Docker](https://docs.docker.com/get-docker/) (to run the service)
-- `curl` and `tar` (to install — both are preinstalled on virtually every system)
-- `git` (only if you're cloning for development, see [WORKTREES.md](WORKTREES.md))
+- [Docker](https://docs.docker.com/get-docker/) (the only thing needed to *run* the service —
+  server images are pulled prebuilt from GHCR, never built locally)
+- `curl` and `tar` (to install the CLI — both are preinstalled on virtually every system)
 - An `ANTHROPIC_API_KEY` (only required for the `memory_extract` tool)
 
-## Install
+The `brain` CLI is a standalone compiled binary — no Node.js, npm, or Go toolchain needed to
+install or run it. (Node is only used to build the server image in CI; contributors editing
+`src/` need it too — see [Development](#development).)
 
-No `git clone` needed — this downloads a source tarball (via `curl`/`tar`), so it works with
-just those two tools installed:
+## Install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/bradygerndt/project-brain/main/install.sh | bash
 ```
 
-This fetches the repo into `~/project-brain` (override with `BRAIN_INSTALL_DIR`), installs npm
-dependencies, and symlinks the `brain` CLI into `~/.local/bin` (override with `BRAIN_BIN_DIR`).
-If that directory isn't already on your `PATH`, the installer offers to add it to your shell rc
-file. Re-running the same command later updates the code in place — `.env`, `data/`, and
-`node_modules/` are left untouched.
+This detects your OS/architecture, downloads the matching `brain` binary from the
+[latest release](https://github.com/bradygerndt/project-brain/releases/latest) into
+`~/.local/bin` (override with `BRAIN_BIN_DIR`), and adds that directory to your `PATH` if
+needed. No repo checkout, no `git clone`, no package manager.
 
-Already have the repo checked out (e.g. via `git clone` for development)? Just run the script in
-place — it detects the local checkout and skips the download:
-
-```bash
-./install.sh
-```
+Re-running the same command later upgrades the CLI to the newest release.
 
 After installing, add your Anthropic API key (only needed for `memory_extract`):
 
 ```bash
-$EDITOR ~/project-brain/.env   # set ANTHROPIC_API_KEY=sk-ant-...
+$EDITOR ~/.config/brain/.env   # set ANTHROPIC_API_KEY=sk-ant-...
 ```
+
+(Override that location with `BRAIN_CONFIG_DIR`.)
 
 ## Quick start
 
@@ -66,10 +62,15 @@ brain open         # open the web UI in your browser
 ```
 
 Add the printed config to `~/.claude/settings.json` under `"mcpServers"`, then restart Claude
-Code. The `home` instance is defined out of the box in `docker-compose.yml`, listening on MCP
-port `3579` and artifacts port `3580`.
+Code. A `home` instance is seeded automatically on first run, listening on MCP port `3579` and
+artifacts port `3580` — no config file to hand-edit.
 
 ## `brain` CLI
+
+`brain` owns Docker image/composition only: it drives the `docker` CLI directly (no
+`docker compose` dependency) and stores instance config at
+`~/.config/brain/instances.yaml` (override with `BRAIN_CONFIG_DIR`). Server images are pulled
+from `ghcr.io/bradygerndt/project-brain`.
 
 | Command | Description |
 |---|---|
@@ -78,11 +79,13 @@ port `3579` and artifacts port `3580`.
 | `brain restart [name]` | Restart instance(s) |
 | `brain ps` | List all instances and health status |
 | `brain logs [name] [-f]` | Show logs (follow with `-f`) |
-| `brain add <name> <mcp-port> <artifacts-port>` | Add a new instance to `docker-compose.yml` |
+| `brain add <name> <mcp-port> <artifacts-port>` | Register a new instance (`--tag`/`--image` to pick a server version) |
 | `brain remove <name>` | Remove an instance (data volume preserved) |
+| `brain update [name]` | Pull the latest (or `--tag`/`--image`-selected) server image and recreate instance(s) |
 | `brain health [name]` | Hit the health endpoint(s) directly |
 | `brain open [name]` | Open the web UI in your browser |
 | `brain config` | Print MCP config for `~/.claude/settings.json` |
+| `brain version` | Show CLI version and its default server image tag |
 | `brain help` | Show all commands |
 
 ### Running multiple instances
@@ -94,6 +97,20 @@ brain config                # includes both "home" and "work" now
 ```
 
 Each instance gets its own Docker volume, so memories and artifacts are isolated per instance.
+Embedding-model weights are cached in one volume shared across all instances.
+
+### Server versions
+
+A fresh `brain` install defaults new instances to the image matching its own release (e.g.
+CLI `v1.2.0` → `ghcr.io/bradygerndt/project-brain:v1.2.0`), so a clean install always gets a
+version it was actually tested against. Override per instance:
+
+```bash
+brain add work 3589 3590 --tag edge     # track the latest main-branch build
+brain update work --tag v1.3.0          # pin to a specific released version
+```
+
+`edge` tracks `main`; `latest` and `vX.Y.Z` are only ever published on tagged releases.
 
 ## MCP tools
 
@@ -135,21 +152,45 @@ The artifacts server (separate port) serves stored files at `/artifacts/<id>/<fi
 
 ## Configuration
 
-Set in `.env` (copied from `.env.example` by the installer) or as environment variables:
+`~/.config/brain/.env` (created by the installer) or an already-exported shell env var
+(which takes precedence) supplies `ANTHROPIC_API_KEY` — `brain` reads it and passes it into
+each container it creates. Inside the container itself:
 
 | Variable | Purpose |
 |---|---|
 | `ANTHROPIC_API_KEY` | Required for `memory_extract` |
-| `BRAIN_NAME` | Instance name (set per-service in `docker-compose.yml`) |
-| `MCP_PORT` | Port for the `/mcp` endpoint and web UI |
-| `ARTIFACTS_PORT` | Port for serving stored artifacts |
+| `BRAIN_NAME` | Instance name, set automatically by `brain` |
+| `MCP_PORT` | Port for the `/mcp` endpoint and web UI, set automatically by `brain` |
+| `ARTIFACTS_PORT` | Port for serving stored artifacts, set automatically by `brain` |
 | `ARTIFACTS_HOST` | Override the host used when building artifact URLs |
 
 ## Development
 
 See [WORKTREES.md](WORKTREES.md) for the branch/worktree convention used for feature work.
 
+**Server** (`src/`, TypeScript, runs natively via Node's built-in type-stripping — no build
+step):
+
 ```bash
 npm install
-npm run dev     # node --watch src/server.js
+npm run dev         # node --watch src/server.ts
+npm run typecheck    # tsc --noEmit
 ```
+
+To run the server in Docker from local source instead of the published image:
+
+```bash
+docker compose -f docker-compose.dev.yml up --build
+```
+
+**CLI** (`cli/`, Go):
+
+```bash
+cd cli
+go build ./...
+go run . help
+```
+
+CI publishes the server image to GHCR on every push to `main` (tag `edge`) and on version
+tags (`vX.Y.Z` + `latest`), and cross-compiles `brain` releases via GoReleaser on version tags
+— see `.github/workflows/`.
