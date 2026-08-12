@@ -13,22 +13,23 @@ export function registerMemoryTools(server: McpServer) {
       value: z.string(),
       tags: z.array(z.string()).optional(),
       namespace: z.string().optional(),
-      source: z.string().optional().describe('Who wrote this: agent name, "manual", "extracted"'),
+      source: z.string().optional().describe('Who wrote this: agent name, "manual", "extracted". Defaults to the connecting MCP client\'s name if omitted.'),
       search_text: z.string().optional().describe('Override text used for semantic indexing'),
     } },
     async ({ key, value, tags = [], namespace = 'default', source, search_text }) => {
       const now = Date.now();
       const tagsJson = JSON.stringify(tags);
+      const effectiveSource = source ?? server.server.getClientVersion()?.name ?? null;
       const existing = db.prepare('SELECT created_at FROM memory WHERE key = ? AND namespace = ?').get(key, namespace);
 
       if (existing) {
         db.prepare(
           'UPDATE memory SET value=?, tags=?, source=?, search_text=?, updated_at=? WHERE key=? AND namespace=?'
-        ).run(value, tagsJson, source ?? null, search_text ?? null, now, key, namespace);
+        ).run(value, tagsJson, effectiveSource, search_text ?? null, now, key, namespace);
       } else {
         db.prepare(
           'INSERT INTO memory(key, value, tags, namespace, source, search_text, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)'
-        ).run(key, value, tagsJson, namespace, source ?? null, search_text ?? null, now, now);
+        ).run(key, value, tagsJson, namespace, effectiveSource, search_text ?? null, now, now);
       }
 
       setImmediate(() => vectorUpsert(key, namespace, search_text ?? value));
