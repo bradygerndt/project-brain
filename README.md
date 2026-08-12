@@ -150,7 +150,9 @@ CLI's own version and its git/release tags keep the `v` (the Go convention, e.g.
 
 ## MCP tools
 
-Exposed to any MCP client (e.g. Claude Code) connected to `/mcp`:
+Exposed to any MCP client (e.g. Claude Code) connected to `/mcp`. See
+[docs/memory-flow.md](docs/memory-flow.md) for how the memory tools actually read and write
+under the hood (SQLite vs. LanceDB, sync vs. async indexing).
 
 **Memory**
 - `memory_set` — store or update an entry (indexed for keyword + semantic search)
