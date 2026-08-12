@@ -4,6 +4,11 @@ A self-hosted MCP (Model Context Protocol) memory service for Claude Code. It gi
 persistent, searchable memory (keyword + semantic), a place to store file artifacts, and simple
 presence/locking primitives for coordinating multiple agents working on the same project.
 
+Built primarily for Claude Code and other CLIs/agents that connect to an MCP server's URL
+directly — the same client model Claude Code uses. Claude Desktop and the Claude mobile/web app
+work differently and need an extra step to reach a self-hosted instance like this one; see
+[Connect Claude Desktop or the mobile/web app](docs/desktop-mobile.md) if you want that instead.
+
 Runs in Docker, is managed through the `brain` CLI, and supports multiple independent instances
 (e.g. one per machine or one per project) side by side.
 
@@ -110,6 +115,7 @@ the repo itself so it's automatic for anyone who clones it.
 - [Connect a specific git project](docs/connect-a-project.md) — checked-in `.mcp.json` instead of personal settings
 - [Access over Tailscale](docs/tailscale.md) — reach your instance from other devices
 - [Access over your LAN](docs/lan.md) — same, without Tailscale
+- [Connect Claude Desktop or the mobile/web app](docs/desktop-mobile.md) — these don't connect to an MCP URL directly like Claude Code does
 
 ## `brain` CLI
 
