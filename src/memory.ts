@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { db } from './db.ts';
+import { db, getMemoryRowsForHits } from './db.ts';
 import type { MemoryRow, MemorySearchRow } from './db.ts';
 import { vectorUpsert, vectorDelete, vectorSearch } from './lance.ts';
 import { extractFacts } from './extract.ts';
@@ -84,8 +84,9 @@ export function registerMemoryTools(server: McpServer) {
     } },
     async ({ query, namespace, limit = 10 }) => {
       const hits = await vectorSearch(query, namespace, limit);
-      const results = hits.map(h => {
-        const row = db.prepare('SELECT * FROM memory WHERE key = ? AND namespace = ?').get(h.key, h.namespace ?? namespace ?? 'default') as MemoryRow | undefined;
+      const rows = getMemoryRowsForHits(hits);
+      const results = hits.map((h, i) => {
+        const row = rows[i];
         if (!row) return null;
         return { ...row, tags: JSON.parse(row.tags), _score: h._distance };
       }).filter(Boolean);

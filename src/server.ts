@@ -5,7 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import express, { type Request, type Response } from 'express';
-import { db } from './db.ts';
+import { db, getMemoryRowsForHits } from './db.ts';
 import type { MemoryRow, MemorySearchRow, ArtifactRow, AgentRow, LockRow } from './db.ts';
 import { artifactsDir, resolveHost } from './artifacts.ts';
 import { registerMemoryTools } from './memory.ts';
@@ -145,8 +145,9 @@ app.get('/api/memory/semantic', async (req: Request, res: Response) => {
     const lim = Math.min(parseInt(String(limit), 10) || 10, 50);
     const { vectorSearch } = await import('./lance.ts');
     const hits = await vectorSearch(String(q), ns ? String(ns) : undefined, lim);
-    const results = hits.map(h => {
-      const row = db.prepare('SELECT * FROM memory WHERE key = ? AND namespace = ?').get(h.key, h.namespace ?? 'default') as MemoryRow | undefined;
+    const rows = getMemoryRowsForHits(hits);
+    const results = hits.map((h, i) => {
+      const row = rows[i];
       if (!row) return null;
       return { ...row, tags: JSON.parse(row.tags), _score: h._distance };
     }).filter(Boolean);

@@ -117,3 +117,20 @@ CREATE TABLE IF NOT EXISTS locks (
   acquired_at INTEGER NOT NULL
 );
 `);
+
+// Batched (key, namespace) -> row lookup for semantic search results, which
+// otherwise need one query per hit. Returns rows aligned index-for-index
+// with `hits`, undefined where no matching row exists.
+export function getMemoryRowsForHits<T extends { key: string; namespace: string }>(hits: T[]): (MemoryRow | undefined)[] {
+  if (!hits.length) return [];
+  const where = hits.map(() => '(key = ? AND namespace = ?)').join(' OR ');
+  const params = hits.flatMap(h => [h.key, h.namespace]);
+  const rows = db.prepare(`SELECT * FROM memory WHERE ${where}`).all(...params) as unknown as MemoryRow[];
+  const byNamespace = new Map<string, Map<string, MemoryRow>>();
+  for (const r of rows) {
+    let byKey = byNamespace.get(r.namespace);
+    if (!byKey) byNamespace.set(r.namespace, byKey = new Map());
+    byKey.set(r.key, r);
+  }
+  return hits.map(h => byNamespace.get(h.namespace)?.get(h.key));
+}
