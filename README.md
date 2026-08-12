@@ -206,6 +206,7 @@ Besides `/mcp` (the MCP transport), each instance exposes:
 - `POST /api/memory` — create/update a memory entry
 - `GET /api/artifacts?tag=&limit=&offset=` — list artifacts
 - `GET /api/agents` — list active agents
+- `GET /api/locks` — list active resource locks
 
 The artifacts server (separate port) serves stored files at `/artifacts/<id>/<filename>`.
 

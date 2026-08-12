@@ -50,6 +50,9 @@
   .artifact-link { font-size: 0.7rem; color: #60a5fa; text-decoration: none; }
   .artifact-link:hover { text-decoration: underline; }
 
+  .section-title { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: #64748b; margin: 20px 0 8px; }
+  .section-title:first-child { margin-top: 0; }
+  .auto-refresh-note { font-size: 0.75rem; color: #64748b; align-self: center; margin-left: 4px; }
   .agent-table { font-size: 0.875rem; }
   .status-working { color: #34d399; }
   .status-idle { color: #94a3b8; }
@@ -150,8 +153,15 @@
   <div id="panel-agents" class="panel">
     <div class="search-bar">
       <button onclick="loadAgents()">Refresh</button>
+      <span class="auto-refresh-note">auto-refreshes every 5s while this tab is open</span>
     </div>
-    <div id="agentResults"></div>
+    <div id="agentError" class="error" style="display:none"></div>
+
+    <div class="section-title">Sessions</div>
+    <div id="agentSessions"></div>
+
+    <div class="section-title">Locks</div>
+    <div id="agentLocks"></div>
   </div>
 
 </main>
@@ -293,24 +303,63 @@ async function loadArtifacts() {
   } catch (e) { document.getElementById('artifactResults').innerHTML = `<div class="error">${esc(e.message)}</div>`; }
 }
 
-async function loadAgents() {
-  document.getElementById('agentResults').innerHTML = '<div class="loading">Loading…</div>';
+function expiresIn(ms) {
+  const s = Math.floor((ms - Date.now()) / 1000);
+  if (s <= 0) return 'expired';
+  if (s < 60) return `in ${s}s`;
+  if (s < 3600) return `in ${Math.floor(s/60)}m`;
+  return `in ${Math.floor(s/3600)}h`;
+}
+
+function renderSessions(data) {
+  const el = document.getElementById('agentSessions');
+  if (!data.length) { el.innerHTML = '<div class="empty">No active sessions</div>'; return; }
+  let html = `<table class="agent-table"><thead><tr><th>Agent</th><th>Status</th><th>Focus</th><th>Expires</th></tr></thead><tbody>`;
+  for (const a of data) {
+    const cls = a.status === 'working' ? 'working' : a.status === 'idle' ? 'idle' : a.status === 'blocked' ? 'blocked' : 'default';
+    html += `<tr>
+      <td style="font-family:monospace;font-size:0.8rem">${esc(a.agent_id)}</td>
+      <td><span class="dot dot-${cls}"></span><span class="status-${cls}">${esc(a.status)}</span></td>
+      <td style="font-size:0.8rem;color:#94a3b8">${esc(a.focus ?? '—')}</td>
+      <td class="age">${expiresIn(a.expires_at)}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+function renderLocks(data) {
+  const el = document.getElementById('agentLocks');
+  if (!data.length) { el.innerHTML = '<div class="empty">No active locks</div>'; return; }
+  let html = `<table class="agent-table"><thead><tr><th>Resource</th><th>Held by</th><th>Acquired</th><th>Expires</th></tr></thead><tbody>`;
+  for (const l of data) {
+    html += `<tr>
+      <td style="font-family:monospace;font-size:0.8rem">${esc(l.resource)}</td>
+      <td style="font-family:monospace;font-size:0.8rem">${esc(l.agent_id)}</td>
+      <td class="age">${timeAgo(l.acquired_at)}</td>
+      <td class="age">${expiresIn(l.expires_at)}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  el.innerHTML = html;
+}
+
+async function loadAgents(showLoading = true) {
+  showError('agent', null);
+  if (showLoading) {
+    document.getElementById('agentSessions').innerHTML = '<div class="loading">Loading…</div>';
+    document.getElementById('agentLocks').innerHTML = '<div class="loading">Loading…</div>';
+  }
   try {
-    const data = await fetch(`${BASE}/api/agents`).then(r => r.json());
-    if (!data.length) { document.getElementById('agentResults').innerHTML = '<div class="empty">No active agents</div>'; return; }
-    let html = `<table class="agent-table"><thead><tr><th>Agent</th><th>Status</th><th>Focus</th><th>Expires</th></tr></thead><tbody>`;
-    for (const a of data) {
-      const cls = a.status === 'working' ? 'working' : a.status === 'idle' ? 'idle' : a.status === 'blocked' ? 'blocked' : 'default';
-      html += `<tr>
-        <td style="font-family:monospace;font-size:0.8rem">${esc(a.agent_id)}</td>
-        <td><span class="dot dot-${cls}"></span><span class="status-${cls}">${esc(a.status)}</span></td>
-        <td style="font-size:0.8rem;color:#94a3b8">${esc(a.focus ?? '—')}</td>
-        <td class="age">${timeAgo(Date.now() - (a.expires_at - Date.now()))}</td>
-      </tr>`;
-    }
-    html += '</tbody></table>';
-    document.getElementById('agentResults').innerHTML = html;
-  } catch (e) { document.getElementById('agentResults').innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+    const [sessions, locks] = await Promise.all([
+      fetch(`${BASE}/api/agents`).then(r => r.json()),
+      fetch(`${BASE}/api/locks`).then(r => r.json())
+    ]);
+    if (sessions.error) throw new Error(sessions.error);
+    if (locks.error) throw new Error(locks.error);
+    renderSessions(sessions);
+    renderLocks(locks);
+  } catch (e) { showError('agent', e.message); }
 }
 
 function showError(prefix, msg) {
@@ -339,6 +388,9 @@ async function pollHealth() {
 
 pollHealth();
 setInterval(pollHealth, 10000);
+setInterval(() => {
+  if (document.getElementById('panel-agents').classList.contains('active')) loadAgents(false);
+}, 5000);
 loadAllMemory();
 </script>
 </body>

@@ -6,7 +6,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import express, { type Request, type Response } from 'express';
 import { db } from './db.ts';
-import type { MemoryRow, MemorySearchRow, ArtifactRow, AgentRow } from './db.ts';
+import type { MemoryRow, MemorySearchRow, ArtifactRow, AgentRow, LockRow } from './db.ts';
 import { artifactsDir, resolveHost } from './artifacts.ts';
 import { registerMemoryTools } from './memory.ts';
 import { registerArtifactTools } from './artifacts.ts';
@@ -219,6 +219,16 @@ app.get('/api/agents', (_req: Request, res: Response) => {
     const now = Date.now();
     db.prepare('DELETE FROM agents WHERE expires_at <= ?').run(now);
     res.json(db.prepare('SELECT * FROM agents ORDER BY updated_at DESC').all() as unknown as AgentRow[]);
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+app.get('/api/locks', (_req: Request, res: Response) => {
+  try {
+    const now = Date.now();
+    db.prepare('DELETE FROM locks WHERE expires_at <= ?').run(now);
+    res.json(db.prepare('SELECT * FROM locks ORDER BY acquired_at DESC').all() as unknown as LockRow[]);
   } catch (err) {
     res.status(500).json({ error: errorMessage(err) });
   }
