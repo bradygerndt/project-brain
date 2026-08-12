@@ -24,7 +24,8 @@ Runs in Docker, is managed through the `brain` CLI, and supports multiple indepe
 
 - [Docker](https://docs.docker.com/get-docker/) (the only thing needed to *run* the service —
   server images are pulled prebuilt from GHCR, never built locally)
-- `curl` and `tar` (to install the CLI — both are preinstalled on virtually every system)
+- `curl` and `tar` (to install on macOS/Linux/WSL — both are preinstalled on virtually every
+  system) or PowerShell 5.1+ (built into Windows, to install natively)
 - An `ANTHROPIC_API_KEY` — **optional.** The server runs fully without one; it's only used by
   `memory_extract`, where *the server itself* (not your MCP client) makes its own separate
   call to Claude Haiku to pull structured facts out of raw text — handy for importing a
@@ -39,14 +40,26 @@ install or run it. (Node is only used to build the server image in CI; contribut
 
 ## Install
 
+**macOS / Linux / WSL:**
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/bradygerndt/project-brain/main/install.sh | bash
 ```
 
-This detects your OS/architecture, downloads the matching `brain` binary from the
-[latest release](https://github.com/bradygerndt/project-brain/releases/latest) into
-`~/.local/bin` (override with `BRAIN_BIN_DIR`), and adds that directory to your `PATH` if
-needed. No repo checkout, no `git clone`, no package manager.
+(WSL presents as Linux, so this is the right one there too — see the
+[WSL note](#a-note-on-wsl) below before setting up LAN/Tailscale access.)
+
+**Windows (native, PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/bradygerndt/project-brain/main/install.ps1 | iex
+```
+
+Both detect your OS/architecture, download the matching `brain` binary from the
+[latest release](https://github.com/bradygerndt/project-brain/releases/latest) — into
+`~/.local/bin` on macOS/Linux/WSL (override with `BRAIN_BIN_DIR`), or `%LOCALAPPDATA%\brain` on
+Windows — and add that directory to your `PATH` if needed. No repo checkout, no `git clone`, no
+package manager.
 
 Re-running the same command later upgrades the CLI to the newest release.
 
@@ -56,7 +69,17 @@ Optional — add your Anthropic API key if you want `memory_extract` (skip this 
 $EDITOR ~/.config/brain/.env   # set ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-(Override that location with `BRAIN_CONFIG_DIR`.)
+(`%APPDATA%\brain\.env` on native Windows. Override the location with `BRAIN_CONFIG_DIR`.)
+
+### A note on WSL
+
+Native Windows `brain` sees your real network interfaces, so [LAN access](docs/lan.md) works
+automatically. Running `brain` *inside* WSL is different: WSL2's own network address sits
+behind Windows' NAT and isn't reachable from other devices, so `brain` detects this and falls
+back to `127.0.0.1` instead of guessing wrong — you'll need `--artifacts-host` with your
+Windows host's real LAN IP for [LAN](docs/lan.md)/[Tailscale](docs/tailscale.md) access from
+WSL. If you're on Windows mainly to use Docker Desktop, installing natively (above) sidesteps
+this entirely.
 
 ## Quick start
 

@@ -6,14 +6,22 @@ package paths
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // ConfigDir returns the directory holding instances.yaml and .env.
-// Override with BRAIN_CONFIG_DIR; otherwise $XDG_CONFIG_HOME/brain,
-// falling back to ~/.config/brain.
+// Override with BRAIN_CONFIG_DIR; otherwise %APPDATA%\brain on native
+// Windows (WSL reports GOOS=linux, so this doesn't affect it — WSL keeps
+// the Unix path below), or $XDG_CONFIG_HOME/brain falling back to
+// ~/.config/brain everywhere else.
 func ConfigDir() (string, error) {
 	if dir := os.Getenv("BRAIN_CONFIG_DIR"); dir != "" {
 		return dir, nil
+	}
+	if runtime.GOOS == "windows" {
+		if appData := os.Getenv("APPDATA"); appData != "" {
+			return filepath.Join(appData, "brain"), nil
+		}
 	}
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if base == "" {

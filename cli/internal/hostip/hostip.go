@@ -7,8 +7,25 @@ package hostip
 
 import (
 	"net"
+	"os"
 	"strings"
 )
+
+// IsWSL reports whether this process is running under Windows Subsystem
+// for Linux. WSL2 sits behind Windows' own NAT by default — its "eth0"
+// gets an internal address (commonly 172.x.x.x) that only exists inside
+// that one Windows machine's virtual network. It looks exactly like a
+// normal LAN IP to Detect(), but no other device on the LAN can actually
+// reach it; only Windows itself can, via WSL2's automatic localhost
+// forwarding. Callers should not trust Detect()'s result here.
+func IsWSL() bool {
+	data, err := os.ReadFile("/proc/version")
+	if err != nil {
+		return false
+	}
+	s := strings.ToLower(string(data))
+	return strings.Contains(s, "microsoft") || strings.Contains(s, "wsl")
+}
 
 // virtualPrefixes are host-side interface names created by Docker itself
 // (bridges, veth pairs) or other container/VM runtimes — never what we

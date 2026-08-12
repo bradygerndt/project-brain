@@ -17,6 +17,15 @@ http://192.168.1.42:3579/mcp
 Check `brain ps` or `docker inspect brain-<name> --format '{{.Config.Env}}'` (look for
 `ARTIFACTS_HOST`) to see what it auto-detected.
 
+## Running inside WSL
+
+If `brain` is running inside WSL (as opposed to natively on Windows — see the
+[Windows install section](../README.md#install)), auto-detection deliberately doesn't try to
+guess: WSL2's own network address sits behind Windows' NAT and isn't reachable from other
+devices on the LAN at all, even though it looks like a normal private IP from inside WSL.
+`brain` falls back to `127.0.0.1` there instead of confidently handing out a wrong address —
+find your Windows host's real LAN IP (`ipconfig` in Windows) and set it explicitly (see below).
+
 ## If auto-detection picks the wrong address
 
 Machines with multiple network interfaces (VPNs, virtual adapters, several NICs) can confuse

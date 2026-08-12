@@ -119,6 +119,13 @@ func resolveArtifactsHost(explicit string) string {
 	if explicit != "" {
 		return explicit
 	}
+	if hostip.IsWSL() {
+		ui.Info("Detected WSL — its own network address isn't reachable from your LAN, so")
+		ui.Info("defaulting artifact URLs to 127.0.0.1 (works fine from Windows itself).")
+		ui.Info("For other devices, find your Windows host's LAN IP (`ipconfig` in Windows)")
+		ui.Info("and set it: brain update <name> --artifacts-host <windows-lan-ip>")
+		return "127.0.0.1"
+	}
 	return hostip.Detect()
 }
 
