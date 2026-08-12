@@ -20,12 +20,26 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+// Surfaced to clients via the initialize handshake — covers the strategy
+// gaps individual tool schemas don't (when to use which tool, namespacing
+// convention), not per-field format, which each tool's own parameter
+// descriptions already carry.
+const SERVER_INSTRUCTIONS = `project-brain is a persistent memory service for this project or user, shared across sessions and agents.
+
+Facts are stored under dot-namespaced keys (e.g. "user.role", "project.deadline", "decision.api-style") — reuse an existing key to update a fact rather than creating a near-duplicate under a slightly different name. Use memory_set for a single fact you've already identified; use memory_extract for a large blob of raw text (a transcript, notes, a document) you want decomposed into multiple facts automatically — it makes its own call to Claude Haiku server-side and requires ANTHROPIC_API_KEY, so fall back to memory_set if it's unavailable.
+
+For search: memory_search (keyword/full-text) is fast and exact — use it when you know the term. memory_search_semantic (vector similarity) finds conceptually related entries even without exact keyword overlap — use it when you're unsure of the exact phrasing, or want to check for anything related before writing a new fact.
+
+namespace (default: "default") partitions memories — use a distinct namespace per project or user if this instance is shared across contexts that shouldn't mix.
+
+Agent presence (agent_ping/agent_list) and resource locks (lock_acquire/lock_release) are opt-in — nothing is tracked automatically just by connecting. Call agent_ping if you want other agents to see you're active.`;
+
 // --- MCP server factory (one per session) ---
 
 function makeMcpServer(): McpServer {
   const server = new McpServer(
     { name: `project-brain-${BRAIN_NAME}`, version: '1.0.0' },
-    { capabilities: { logging: {} } }
+    { capabilities: { logging: {} }, instructions: SERVER_INSTRUCTIONS }
   );
   registerMemoryTools(server);
   registerArtifactTools(server);
