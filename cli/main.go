@@ -5,15 +5,19 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
+	"github.com/bradygerndt/project-brain/cli/internal/bridge"
 	"github.com/bradygerndt/project-brain/cli/internal/config"
 	"github.com/bradygerndt/project-brain/cli/internal/docker"
 	"github.com/bradygerndt/project-brain/cli/internal/health"
@@ -65,6 +69,8 @@ func main() {
 		err = cmdOpen(args)
 	case "config":
 		err = cmdConfig(args)
+	case "mcp-bridge":
+		err = cmdMcpBridge(args)
 	case "update":
 		err = cmdUpdate(args)
 	case "version":
@@ -593,6 +599,38 @@ func cmdConfig(_ []string) error {
 	return nil
 }
 
+// cmdMcpBridge is the thin CLI entry point for the stdio<->HTTP proxy;
+// see cli/internal/bridge for the actual proxy logic. This is the
+// subprocess Claude Desktop's config launches per instance — stdout is
+// reserved for JSON-RPC framing, so nothing here (or in bridge.Run) may
+// write anything else to it.
+func cmdMcpBridge(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: brain mcp-bridge <name>")
+	}
+	name := args[0]
+
+	s, err := loadSeeded()
+	if err != nil {
+		return err
+	}
+	inst, ok := s.Instances[name]
+	if !ok {
+		return fmt.Errorf(`instance "%s" not found`, name)
+	}
+
+	host := inst.Host
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	url := fmt.Sprintf("http://%s:%d/mcp", host, inst.MCPPort)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	return bridge.New(url).Run(ctx, os.Stdin, os.Stdout, os.Stderr)
+}
+
 func cmdUpdate(args []string) error {
 	if err := docker.CheckAvailable(); err != nil {
 		return err
@@ -702,6 +740,7 @@ func cmdHelp() {
 		{"health [name]", "Hit health endpoint(s) directly"},
 		{"open [name]", "Open Web UI in browser"},
 		{"config", "Print MCP config for ~/.claude/settings.json"},
+		{"mcp-bridge <name>", "stdio<->HTTP bridge for Claude Desktop (low-level; used as a subprocess)"},
 		{"version", "Show CLI version and default server image"},
 		{"help", "Show this help"},
 	}
