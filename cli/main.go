@@ -304,8 +304,9 @@ func cmdPs(_ []string) error {
 			}
 			sessions = fmt.Sprintf(" · %d session%s", h.Sessions, plural)
 		}
-		urlStr := ui.DimStr(fmt.Sprintf("http://127.0.0.1:%d/ui", inst.MCPPort))
-		fmt.Printf("  %-16s %s%s  %s\n", ui.Magenta(name), status, sessions, urlStr)
+		mcpURL := ui.DimStr(fmt.Sprintf("mcp: http://127.0.0.1:%d/mcp", inst.MCPPort))
+		uiURL := ui.DimStr(fmt.Sprintf("ui: http://127.0.0.1:%d/ui", inst.MCPPort))
+		fmt.Printf("  %-16s %s%s  %s  %s\n", ui.Magenta(name), status, sessions, mcpURL, uiURL)
 	}
 	fmt.Println()
 	return nil
