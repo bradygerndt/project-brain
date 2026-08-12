@@ -4,15 +4,14 @@ import { db } from './db.ts';
 import type { AgentRow, LockRow } from './db.ts';
 
 export function registerAgentTools(server: McpServer) {
-  server.tool(
+  server.registerTool(
     'agent_ping',
-    'Announce presence and current activity. Returns the list of all currently active agents.',
-    {
+    { description: 'Announce presence and current activity. Returns the list of all currently active agents.', inputSchema: {
       agent_id: z.string().describe('Unique identifier for this agent, e.g. "web-agent", "mobile-agent"'),
       status: z.string().optional().describe('"idle" | "working" | "blocked" | any custom string'),
       focus: z.string().optional().describe('What the agent is currently working on, e.g. "src/api/auth.ts"'),
       ttl_seconds: z.number().int().positive().optional().describe('How long until this presence expires (default 60s)'),
-    },
+    } },
     async ({ agent_id, status = 'working', focus, ttl_seconds = 60 }) => {
       const now = Date.now();
       const expires_at = now + ttl_seconds * 1000;
@@ -31,10 +30,9 @@ export function registerAgentTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'agent_list',
-    'List all currently active (non-expired) agents.',
-    {},
+    { description: 'List all currently active (non-expired) agents.', inputSchema: {} },
     async () => {
       const now = Date.now();
       db.prepare('DELETE FROM agents WHERE expires_at <= ?').run(now);
@@ -43,14 +41,13 @@ export function registerAgentTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'lock_acquire',
-    'Atomically acquire a named resource lock. Expired locks are auto-released before the attempt.',
-    {
+    { description: 'Atomically acquire a named resource lock. Expired locks are auto-released before the attempt.', inputSchema: {
       resource: z.string().describe('The resource to lock, e.g. "src/api/auth.ts" or "db/schema"'),
       agent_id: z.string(),
       ttl_seconds: z.number().int().positive().optional().describe('Lock TTL in seconds (default 300). Prevents deadlock if agent crashes.'),
-    },
+    } },
     async ({ resource, agent_id, ttl_seconds = 300 }) => {
       const now = Date.now();
       const expires_at = now + ttl_seconds * 1000;
@@ -72,13 +69,12 @@ export function registerAgentTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'lock_release',
-    'Release a resource lock. Only the agent that holds the lock can release it.',
-    {
+    { description: 'Release a resource lock. Only the agent that holds the lock can release it.', inputSchema: {
       resource: z.string(),
       agent_id: z.string(),
-    },
+    } },
     async ({ resource, agent_id }) => {
       const result = db.prepare('DELETE FROM locks WHERE resource = ? AND agent_id = ?').run(resource, agent_id);
       return { content: [{ type: 'text' as const, text: JSON.stringify({ released: result.changes > 0 }) }] };

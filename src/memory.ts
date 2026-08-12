@@ -6,17 +6,16 @@ import { vectorUpsert, vectorDelete, vectorSearch } from './lance.ts';
 import { extractFacts } from './extract.ts';
 
 export function registerMemoryTools(server: McpServer) {
-  server.tool(
+  server.registerTool(
     'memory_set',
-    'Store or update a memory entry. Also indexes for semantic search.',
-    {
+    { description: 'Store or update a memory entry. Also indexes for semantic search.', inputSchema: {
       key: z.string().describe('Dot-namespaced key, e.g. "decision.api-style"'),
       value: z.string(),
       tags: z.array(z.string()).optional(),
       namespace: z.string().optional(),
       source: z.string().optional().describe('Who wrote this: agent name, "manual", "extracted"'),
       search_text: z.string().optional().describe('Override text used for semantic indexing'),
-    },
+    } },
     async ({ key, value, tags = [], namespace = 'default', source, search_text }) => {
       const now = Date.now();
       const tagsJson = JSON.stringify(tags);
@@ -37,13 +36,12 @@ export function registerMemoryTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'memory_get',
-    'Retrieve a memory entry by exact key.',
-    {
+    { description: 'Retrieve a memory entry by exact key.', inputSchema: {
       key: z.string(),
       namespace: z.string().optional(),
-    },
+    } },
     async ({ key, namespace = 'default' }) => {
       const row = db.prepare('SELECT * FROM memory WHERE key = ? AND namespace = ?').get(key, namespace) as MemoryRow | undefined;
       if (!row) return { content: [{ type: 'text' as const, text: 'null' }] };
@@ -51,14 +49,13 @@ export function registerMemoryTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'memory_search',
-    'Full-text keyword search across memory entries (fast, exact matching).',
-    {
+    { description: 'Full-text keyword search across memory entries (fast, exact matching).', inputSchema: {
       query: z.string(),
       namespace: z.string().optional(),
       limit: z.number().int().positive().optional(),
-    },
+    } },
     async ({ query, namespace, limit = 20 }) => {
       const params: (string | number)[] = [query];
       let sql = `
@@ -77,14 +74,13 @@ export function registerMemoryTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'memory_search_semantic',
-    'Vector similarity search — finds related entries even without keyword overlap.',
-    {
+    { description: 'Vector similarity search — finds related entries even without keyword overlap.', inputSchema: {
       query: z.string(),
       namespace: z.string().optional(),
       limit: z.number().int().positive().optional(),
-    },
+    } },
     async ({ query, namespace, limit = 10 }) => {
       const hits = await vectorSearch(query, namespace, limit);
       const results = hits.map(h => {
@@ -96,15 +92,14 @@ export function registerMemoryTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'memory_list',
-    'List memory entries with optional filters.',
-    {
+    { description: 'List memory entries with optional filters.', inputSchema: {
       namespace: z.string().optional(),
       tag: z.string().optional(),
       limit: z.number().int().positive().optional(),
       offset: z.number().int().nonnegative().optional(),
-    },
+    } },
     async ({ namespace, tag, limit = 50, offset = 0 }) => {
       let sql = 'SELECT * FROM memory WHERE 1=1';
       const params: (string | number)[] = [];
@@ -117,13 +112,12 @@ export function registerMemoryTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'memory_delete',
-    'Remove a memory entry by key.',
-    {
+    { description: 'Remove a memory entry by key.', inputSchema: {
       key: z.string(),
       namespace: z.string().optional(),
-    },
+    } },
     async ({ key, namespace = 'default' }) => {
       const result = db.prepare('DELETE FROM memory WHERE key = ? AND namespace = ?').run(key, namespace);
       setImmediate(() => vectorDelete(key));
@@ -131,14 +125,13 @@ export function registerMemoryTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'memory_extract',
-    'Use Claude Haiku to extract structured facts from raw text and store them as memories. Requires ANTHROPIC_API_KEY.',
-    {
+    { description: 'Use Claude Haiku to extract structured facts from raw text and store them as memories. Requires ANTHROPIC_API_KEY.', inputSchema: {
       text: z.string().describe('Raw text to extract facts from (conversation, note, document, etc.)'),
       namespace: z.string().optional(),
       context: z.string().optional().describe('Optional hint about what this text is about'),
-    },
+    } },
     async ({ text, namespace = 'default', context }) => {
       const facts = await extractFacts(text, context);
       const now = Date.now();

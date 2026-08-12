@@ -9,7 +9,10 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 export const artifactsDir = resolve(dataPath, 'artifacts');
 
-function artifactHost(): string {
+// Host this container is reachable at from outside — used both for artifact
+// URLs and (from server.ts) the web UI URL, since both are served off the
+// same container as ARTIFACTS_HOST/--artifacts-host already documents.
+export function resolveHost(): string {
   const override = process.env.ARTIFACTS_HOST;
   if (override) return override;
   const nets = networkInterfaces();
@@ -23,7 +26,7 @@ function artifactHost(): string {
 
 function artifactUrl(id: string, filename: string): string {
   const port = process.env.ARTIFACTS_PORT ?? '3580';
-  return `http://${artifactHost()}:${port}/artifacts/${id}/${filename}`;
+  return `http://${resolveHost()}:${port}/artifacts/${id}/${filename}`;
 }
 
 function safeFilename(name: string, mimeType: string): string {
@@ -38,16 +41,15 @@ function safeFilename(name: string, mimeType: string): string {
 }
 
 export function registerArtifactTools(server: McpServer) {
-  server.tool(
+  server.registerTool(
     'artifact_write',
-    'Store a file artifact (HTML, image, JSON, etc.). Returns the artifact id and HTTP URL.',
-    {
+    { description: 'Store a file artifact (HTML, image, JSON, etc.). Returns the artifact id and HTTP URL.', inputSchema: {
       name: z.string().describe('Human-readable name for this artifact'),
       content: z.string().describe('File content as utf8 text or base64 string'),
       encoding: z.enum(['utf8', 'base64']).optional(),
       mime_type: z.string().optional(),
       tags: z.array(z.string()).optional(),
-    },
+    } },
     async ({ name, content, encoding = 'utf8', mime_type = 'application/octet-stream', tags = [] }) => {
       const id = randomUUID();
       const filename = safeFilename(name, mime_type);
@@ -66,10 +68,9 @@ export function registerArtifactTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'artifact_read',
-    'Read the content of a stored artifact.',
-    { id: z.string() },
+    { description: 'Read the content of a stored artifact.', inputSchema: { id: z.string() } },
     async ({ id }) => {
       const row = db.prepare('SELECT * FROM artifacts WHERE id = ?').get(id) as ArtifactRow | undefined;
       if (!row) return { content: [{ type: 'text' as const, text: 'null' }] };
@@ -84,14 +85,13 @@ export function registerArtifactTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'artifact_list',
-    'List stored artifacts.',
-    {
+    { description: 'List stored artifacts.', inputSchema: {
       tag: z.string().optional(),
       limit: z.number().int().positive().optional(),
       offset: z.number().int().nonnegative().optional(),
-    },
+    } },
     async ({ tag, limit = 50, offset = 0 }) => {
       let sql = 'SELECT id, name, mime_type, filename, size_bytes, tags, created_at, updated_at FROM artifacts WHERE 1=1';
       const params: (string | number)[] = [];
@@ -106,10 +106,9 @@ export function registerArtifactTools(server: McpServer) {
     }
   );
 
-  server.tool(
+  server.registerTool(
     'artifact_url',
-    'Get the HTTP URL for an artifact without reading its content.',
-    { id: z.string() },
+    { description: 'Get the HTTP URL for an artifact without reading its content.', inputSchema: { id: z.string() } },
     async ({ id }) => {
       const row = db.prepare('SELECT filename FROM artifacts WHERE id = ?').get(id) as Pick<ArtifactRow, 'filename'> | undefined;
       if (!row) return { content: [{ type: 'text' as const, text: 'null' }] };
