@@ -25,40 +25,57 @@ want this — the mobile app has no other option — put a real auth layer in fr
 reverse proxy with an API key, basic auth, or OAuth, rather than exposing `brain`'s bare `/mcp`
 endpoint.
 
-## Claude Desktop, local-only (optional, third-party)
+## Claude Desktop, local-only
 
-If you only need Desktop — not mobile — and want to avoid exposing anything publicly, you can
-bridge Desktop's config file to your instance with
-[`mcp-remote`](https://github.com/geelen/mcp-remote), a small stdio↔HTTP proxy. Desktop's own
-config only starts servers via a local command, so this runs locally and forwards to your
-instance over Streamable HTTP — nothing needs to be internet-reachable, same trust model as
-Claude Code.
+If you only need Desktop — not mobile — and want to avoid exposing anything publicly, one command
+wires it up:
 
-Worth calling out before using it: `mcp-remote`'s own README describes it as *"a working
-proof-of-concept... should be considered experimental"* — it's community-maintained (not
-Anthropic), unaffiliated with this project, and the most established option available, but not a
-polished or guaranteed-stable one. Needs [Node.js](https://nodejs.org/) (18+) installed for
-`npx` — the `brain` CLI and server don't otherwise require it, this bridge is the exception.
+```bash
+brain connect desktop          # every registered instance
+brain connect desktop home     # or just one, by name
+```
 
-1. **Open the config file.** In Claude Desktop: Settings → Developer → Edit Config. This creates
-   the file if it doesn't exist yet:
-   - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-   - **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+This writes Claude Desktop's config file for you, using a stdio↔HTTP bridge built into the
+`brain` binary itself (`brain mcp-bridge <name>`) — no Node.js/`npx`, no third-party dependency.
+Desktop's own config only starts servers via a local command, so this runs locally and forwards
+to your instance over the same Streamable HTTP transport Claude Code uses; nothing needs to be
+internet-reachable.
 
-2. **Add project-brain**, pointing at your instance's MCP URL (swap in your port, or a
-   [Tailscale](tailscale.md)/[LAN](lan.md) address if Desktop isn't on the same machine as
-   `brain`):
+It's conservative about the file it's editing — a real GitHub issue documents Desktop corrupting
+this file when something writes it a value it doesn't expect, so `brain` parses generically,
+leaves unrelated top-level keys and any other `mcpServers` entries untouched, and backs up the
+previous version to `claude_desktop_config.json.bak` before writing. Each instance gets its own
+entry keyed `project-brain-<name>` (not a single fixed key), so running the command again for a
+second instance adds alongside the first rather than overwriting it:
 
-   ```json
-   {
-     "mcpServers": {
-       "project-brain": {
-         "command": "npx",
-         "args": ["mcp-remote", "http://127.0.0.1:3579/mcp"]
-       }
-     }
-   }
-   ```
+```json
+{
+  "mcpServers": {
+    "project-brain-home": {
+      "command": "/path/to/brain",
+      "args": ["mcp-bridge", "home"]
+    },
+    "project-brain-work": {
+      "command": "/path/to/brain",
+      "args": ["mcp-bridge", "work"]
+    }
+  }
+}
+```
 
-3. **Restart Claude Desktop completely** (quit, not just close the window) for it to pick up the
-   change. The tools show up under the connector/hammer icon in the message box once it connects.
+**Restart Claude Desktop completely** (quit, not just close the window) for it to pick up the
+change. The tools show up under the connector/hammer icon in the message box once it connects.
+
+Available on macOS and Windows — wherever Claude Desktop itself runs. There's no Linux build of
+Desktop (WSL included), so `brain connect desktop` refuses with a clear error there instead of
+writing a config file nothing will ever read. The instance just needs to be registered in
+`instances.yaml`, not currently running — `brain mcp-bridge` fails with a clear error at
+Desktop-launch time if it's down, the same as any other URL misconfiguration would. If Desktop
+runs on a different machine than the instance itself (e.g. a laptop reaching a home server), see
+[Tailscale](tailscale.md) or [LAN](lan.md) for registering it with `brain add ... --host`; you
+still run `brain connect desktop` on the machine Desktop is actually installed on.
+
+One gap worth knowing: removing an instance later (`brain remove work`) doesn't prune its
+`project-brain-work` entry from Desktop's config — it'll just fail quietly next time Desktop
+tries to launch it. `brain config`'s Claude Code output has the same characteristic today, so
+this isn't a regression, just something to clean up by hand if it bothers you.
