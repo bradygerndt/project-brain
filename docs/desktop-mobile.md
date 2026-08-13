@@ -79,3 +79,42 @@ One gap worth knowing: removing an instance later (`brain remove work`) doesn't 
 `project-brain-work` entry from Desktop's config — it'll just fail quietly next time Desktop
 tries to launch it. `brain config`'s Claude Code output has the same characteristic today, so
 this isn't a regression, just something to clean up by hand if it bothers you.
+
+### Optional: reduce context usage further
+
+[Headroom](https://github.com/headroomlabs-ai/headroom) is a separately-maintained,
+separately-installed context-compression tool — unrelated to `brain`, mentioned here only because
+it pairs naturally if large tool outputs (project-brain's memory/artifact payloads included) are
+eating into your context budget and you'd rather address that generically than per-tool. `brain`
+does not install, wrap, or automate it in any way; this is documentation only, nothing here adds
+code or a dependency.
+
+Headroom runs its own MCP server exposing `headroom_compress`, `headroom_retrieve`, and
+`headroom_stats` tools that Claude can call directly on large outputs. To use it alongside
+project-brain: install it separately with `pip install "headroom-ai[mcp]"` (the npm package of
+the same name is a TypeScript library you'd import in code, not this CLI — for the MCP server
+you want the pip package), then run its server with `headroom mcp serve` (check Headroom's own
+docs for current flags/invocation — this note isn't tracking their CLI closely). Add it as a
+**second**, independent entry in `claude_desktop_config.json` alongside whatever
+`brain connect desktop` generated:
+
+```json
+{
+  "mcpServers": {
+    "project-brain-home": {
+      "command": "/path/to/brain",
+      "args": ["mcp-bridge", "home"]
+    },
+    "headroom": {
+      "command": "headroom",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+Why `brain` doesn't automate this itself: Headroom's CLI/proxy modes are shaped around LLM
+chat-completion APIs (Anthropic's `/v1/messages`, OpenAI-compatible endpoints), not generic MCP
+tool responses, so there's no clean way for `brain`'s bridge to transparently compress what it
+forwards. Registering Headroom's own MCP server, as above, is the integration path its own docs
+support — entirely opt-in and separate from `brain`.
