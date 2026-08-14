@@ -25,6 +25,7 @@ import (
 	"github.com/bradygerndt/project-brain/cli/internal/docker"
 	"github.com/bradygerndt/project-brain/cli/internal/health"
 	"github.com/bradygerndt/project-brain/cli/internal/hostip"
+	"github.com/bradygerndt/project-brain/cli/internal/prompt"
 	"github.com/bradygerndt/project-brain/cli/internal/state"
 	"github.com/bradygerndt/project-brain/cli/internal/ui"
 )
@@ -165,25 +166,17 @@ func resolveArtifactsHost(explicit string) string {
 
 // --- state helpers ---
 
-// loadSeeded loads instances.yaml, seeding a default "home" instance
-// (matching the ports the old shipped docker-compose.yml used) on first
-// run so a fresh install works out of the box.
-func loadSeeded() (*state.State, error) {
-	s, err := state.Load()
-	if err != nil {
-		return nil, err
-	}
+// requireInstances returns a clear error when the registry is empty,
+// instead of a command silently seeding a default or (worse) doing nothing
+// when it loops over zero "all instances". No command mutates the registry
+// as a side effect of running it — brain add is the only thing that adds an
+// instance, and it says so explicitly here rather than a phantom instance
+// just appearing in instances.yaml the first time any other command runs.
+func requireInstances(s *state.State) error {
 	if len(s.Instances) == 0 {
-		s.Instances["home"] = &state.Instance{
-			MCPPort:       3579,
-			ArtifactsPort: 3580,
-			Image:         imageRef(defaultImageTag),
-		}
-		if err := state.Save(s); err != nil {
-			return nil, err
-		}
+		return fmt.Errorf("no instances registered — run `brain add` (with no arguments, it'll prompt you for the details)")
 	}
-	return s, nil
+	return nil
 }
 
 func sortedNames(s *state.State) []string {
@@ -223,8 +216,11 @@ func cmdStart(args []string) error {
 	if err := docker.CheckAvailable(); err != nil {
 		return err
 	}
-	s, err := loadSeeded()
+	s, err := state.Load()
 	if err != nil {
+		return err
+	}
+	if err := requireInstances(s); err != nil {
 		return err
 	}
 	names, err := targets(s, args)
@@ -291,8 +287,11 @@ func cmdStop(args []string) error {
 	if err := docker.CheckAvailable(); err != nil {
 		return err
 	}
-	s, err := loadSeeded()
+	s, err := state.Load()
 	if err != nil {
+		return err
+	}
+	if err := requireInstances(s); err != nil {
 		return err
 	}
 	names, err := targets(s, args)
@@ -321,8 +320,11 @@ func cmdRestart(args []string) error {
 	if err := docker.CheckAvailable(); err != nil {
 		return err
 	}
-	s, err := loadSeeded()
+	s, err := state.Load()
 	if err != nil {
+		return err
+	}
+	if err := requireInstances(s); err != nil {
 		return err
 	}
 	names, err := targets(s, args)
@@ -347,15 +349,14 @@ func cmdRestart(args []string) error {
 }
 
 func cmdPs(_ []string) error {
-	s, err := loadSeeded()
+	s, err := state.Load()
 	if err != nil {
 		return err
 	}
-	names := sortedNames(s)
-	if len(names) == 0 {
-		ui.Info("No instances defined.")
-		return nil
+	if err := requireInstances(s); err != nil {
+		return err
 	}
+	names := sortedNames(s)
 
 	ui.Bold("\nBrain instances:\n")
 	for _, name := range names {
@@ -409,8 +410,11 @@ func cmdLogs(args []string) error {
 		}
 	}
 
-	s, err := loadSeeded()
+	s, err := state.Load()
 	if err != nil {
+		return err
+	}
+	if err := requireInstances(s); err != nil {
 		return err
 	}
 	names, err := targets(s, filtered)
@@ -450,14 +454,23 @@ func cmdLogs(args []string) error {
 	return nil
 }
 
+// cmdAdd is the only command that mutates the registry from an empty
+// state (see requireInstances) — with no arguments at all it walks the
+// user through it interactively instead of erroring on a usage message.
+// Any arguments, even partial ones, keep the exact flag/positional
+// behavior this always had.
 func cmdAdd(args []string) error {
+	if len(args) == 0 {
+		return cmdAddInteractive()
+	}
+
 	args, tag := extractFlag(args, "--tag")
 	args, image := extractFlag(args, "--image")
 	args, artifactsHost := extractFlag(args, "--artifacts-host")
 	args, host := extractFlag(args, "--host")
 
 	if len(args) < 3 {
-		return fmt.Errorf("usage: brain add <name> <mcp-port> <artifacts-port> [--tag T | --image I] [--artifacts-host HOST]\n       or:    brain add <name> <mcp-port> <artifacts-port> --host HOST   (register a remote instance; not managed by this brain)\n       e.g.  brain add work 3589 3590\n       LAN artifact URLs are auto-detected; --artifacts-host only needed to override (e.g. for Tailscale):\n       e.g.  brain add remote 3589 3590 --artifacts-host 100.x.y.z\n       (already have \"home\"? use `brain update home --artifacts-host ...` instead)")
+		return fmt.Errorf("usage: brain add <name> <mcp-port> <artifacts-port> [--tag T | --image I] [--artifacts-host HOST]\n       or:    brain add <name> <mcp-port> <artifacts-port> --host HOST   (register a remote instance; not managed by this brain)\n       or:    brain add                                                  (prompts for everything)\n       e.g.  brain add work 3589 3590\n       LAN artifact URLs are auto-detected; --artifacts-host only needed to override (e.g. for Tailscale):\n       e.g.  brain add remote 3589 3590 --artifacts-host 100.x.y.z\n       (already have \"home\"? use `brain update home --artifacts-host ...` instead)")
 	}
 	name, mcpStr, artStr := args[0], args[1], args[2]
 
@@ -471,15 +484,79 @@ func cmdAdd(args []string) error {
 		return fmt.Errorf("--host can't be combined with --tag/--image — a remote instance isn't a locally-pulled image")
 	}
 
-	// Deliberately state.Load, not loadSeeded: add is what defines the
-	// first instance, so it must not race a phantom local "home" seed
-	// into existence first — that's real for --host callers with no
-	// local instances at all, and wrong even for local callers naming
-	// their first instance something other than "home".
 	s, err := state.Load()
 	if err != nil {
 		return err
 	}
+	return addInstance(s, name, mcpPort, artPort, tag, image, artifactsHost, host)
+}
+
+// cmdAddInteractive prompts for every brain add option one at a time,
+// suggesting the same defaults instances.yaml used to get seeded with
+// silently — now explicit and confirmable instead of a side effect of
+// running some unrelated command on an empty registry.
+func cmdAddInteractive() error {
+	s, err := state.Load()
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("No arguments given — let's walk through it. Press enter to accept the default.")
+	p := prompt.New(os.Stdin)
+
+	defaultName := ""
+	if len(s.Instances) == 0 {
+		defaultName = "home"
+	}
+	name, err := p.String("Instance name", defaultName)
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		return fmt.Errorf("name is required")
+	}
+
+	remote, err := p.YesNo("Remote instance (managed on another host, e.g. via Tailscale)?", false)
+	if err != nil {
+		return err
+	}
+
+	mcpPort, err := p.Int("MCP port", 3579)
+	if err != nil {
+		return err
+	}
+	artPort, err := p.Int("Artifacts port", 3580)
+	if err != nil {
+		return err
+	}
+
+	if remote {
+		host, err := p.String("Remote host (IP or hostname)", "")
+		if err != nil {
+			return err
+		}
+		if host == "" {
+			return fmt.Errorf("host is required for a remote instance")
+		}
+		return addInstance(s, name, mcpPort, artPort, "", "", "", host)
+	}
+
+	tag, err := p.String("Image tag (blank = match this CLI's own version)", "")
+	if err != nil {
+		return err
+	}
+	artifactsHost, err := p.String("Artifacts host override (blank = auto-detect)", "")
+	if err != nil {
+		return err
+	}
+	return addInstance(s, name, mcpPort, artPort, tag, "", artifactsHost, "")
+}
+
+// addInstance validates and saves one new instance, then prints the same
+// confirmation cmdAdd always has — shared by the flag-driven and
+// interactive paths so there's exactly one place that enforces name
+// uniqueness and port conflicts.
+func addInstance(s *state.State, name string, mcpPort, artPort int, tag, image, artifactsHost, host string) error {
 	if _, exists := s.Instances[name]; exists {
 		return fmt.Errorf(`instance "%s" already exists`, name)
 	}
@@ -524,8 +601,11 @@ func cmdRemove(args []string) error {
 	}
 	name := args[0]
 
-	s, err := loadSeeded()
+	s, err := state.Load()
 	if err != nil {
+		return err
+	}
+	if err := requireInstances(s); err != nil {
 		return err
 	}
 	if _, exists := s.Instances[name]; !exists {
@@ -549,8 +629,11 @@ func cmdRemove(args []string) error {
 }
 
 func cmdHealth(args []string) error {
-	s, err := loadSeeded()
+	s, err := state.Load()
 	if err != nil {
+		return err
+	}
+	if err := requireInstances(s); err != nil {
 		return err
 	}
 	names, err := targets(s, args)
@@ -578,8 +661,11 @@ func cmdHealth(args []string) error {
 }
 
 func cmdOpen(args []string) error {
-	s, err := loadSeeded()
+	s, err := state.Load()
 	if err != nil {
+		return err
+	}
+	if err := requireInstances(s); err != nil {
 		return err
 	}
 	all := sortedNames(s)
@@ -613,8 +699,11 @@ func cmdOpen(args []string) error {
 }
 
 func cmdConfig(_ []string) error {
-	s, err := loadSeeded()
+	s, err := state.Load()
 	if err != nil {
+		return err
+	}
+	if err := requireInstances(s); err != nil {
 		return err
 	}
 	names := sortedNames(s)
@@ -663,8 +752,11 @@ func cmdConnectDesktop(args []string) error {
 		return err
 	}
 
-	s, err := loadSeeded()
+	s, err := state.Load()
 	if err != nil {
+		return err
+	}
+	if err := requireInstances(s); err != nil {
 		return err
 	}
 	names, err := targets(s, args)
@@ -708,8 +800,11 @@ func cmdMcpBridge(args []string) error {
 	}
 	name := args[0]
 
-	s, err := loadSeeded()
+	s, err := state.Load()
 	if err != nil {
+		return err
+	}
+	if err := requireInstances(s); err != nil {
 		return err
 	}
 	inst, ok := s.Instances[name]
@@ -737,8 +832,11 @@ func cmdUpdate(args []string) error {
 	args, image := extractFlag(args, "--image")
 	args, artifactsHost := extractFlag(args, "--artifacts-host")
 
-	s, err := loadSeeded()
+	s, err := state.Load()
 	if err != nil {
+		return err
+	}
+	if err := requireInstances(s); err != nil {
 		return err
 	}
 	names, err := targets(s, args)
@@ -850,8 +948,11 @@ func cmdBackup(args []string) error {
 	}
 	name := args[0]
 
-	s, err := loadSeeded()
+	s, err := state.Load()
 	if err != nil {
+		return err
+	}
+	if err := requireInstances(s); err != nil {
 		return err
 	}
 	inst, ok := s.Instances[name]
@@ -904,8 +1005,11 @@ func cmdRestore(args []string) error {
 	}
 	name, backupFile := args[0], args[1]
 
-	s, err := loadSeeded()
+	s, err := state.Load()
 	if err != nil {
+		return err
+	}
+	if err := requireInstances(s); err != nil {
 		return err
 	}
 	inst, ok := s.Instances[name]
@@ -969,7 +1073,7 @@ func cmdHelp() {
 		{"restart [name]", "Restart instance(s)"},
 		{"ps", "List all instances and health status"},
 		{"logs [name] [-f]", "Show logs (follow with -f)"},
-		{"add <name> <mcp> <art>", "Add a new instance (--tag/--image, --artifacts-host, --host for remote)"},
+		{"add [name] [mcp] [art]", "Add a new instance (--tag/--image, --artifacts-host, --host for remote; no args = interactive)"},
 		{"remove <name>", "Remove an instance (data volume preserved)"},
 		{"update [name]", "Pull + recreate instance(s) (--tag/--image, --artifacts-host)"},
 		{"backup <name> [outfile]", "Tar an instance's data volume to outfile (default: ./brain-<name>-<time>.tar.gz)"},
