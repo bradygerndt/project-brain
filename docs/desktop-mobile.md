@@ -84,6 +84,17 @@ that virtualized folder exists and writes there instead), so you shouldn't need 
 but if Desktop's own "Edit Config" button shows a path under `AppData\Local\Packages\...` and you
 still don't see the tools after restarting, that confirms which install you're on.
 
+**If auto-detection ever gets it wrong** (an install layout it doesn't recognize, or you just want
+to point it somewhere specific — e.g. generating the file on one machine to copy to another),
+`--config-path` writes to an exact file instead of auto-detecting one, on any OS:
+
+```bash
+brain connect desktop --config-path "C:\path\to\claude_desktop_config.json"
+```
+
+This works even on Linux/WSL, where `brain connect desktop` otherwise refuses outright (there's
+nothing to auto-detect there) — with an explicit path there's nothing left to guess.
+
 One gap worth knowing: removing an instance later (`brain remove work`) doesn't prune its
 `project-brain-work` entry from Desktop's config — it'll just fail quietly next time Desktop
 tries to launch it. `brain config`'s Claude Code output has the same characteristic today, so

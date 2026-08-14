@@ -745,11 +745,29 @@ func cmdConnect(args []string) error {
 //
 // desktop.ConfigPath is resolved before anything else touches disk or even
 // loads instances.yaml, so the "no Desktop app on this OS" case (Linux/WSL)
-// fails fast without writing anything.
+// fails fast without writing anything — unless --config-path overrides it,
+// which works on any OS including Linux/WSL: at that point the user has
+// told brain exactly where to write, so there's nothing left to guess or
+// refuse. This is the escape hatch for whenever ConfigPath's auto-detection
+// doesn't match reality (an unusual install layout, a future Windows MSIX
+// packaging change the glob in cli/internal/desktop doesn't catch, or
+// generating the file on one machine to copy to another).
 func cmdConnectDesktop(args []string) error {
-	path, err := desktop.ConfigPath()
-	if err != nil {
-		return err
+	fs := newFlagSet("connect desktop")
+	var configPath string
+	fs.StringVar(&configPath, "config-path", "", "write to this file instead of auto-detecting Claude Desktop's config location")
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("%s\nusage: brain connect desktop [name] [--config-path FILE]", err)
+	}
+	rest := fs.Args()
+
+	path := configPath
+	if path == "" {
+		var err error
+		path, err = desktop.ConfigPath()
+		if err != nil {
+			return err
+		}
 	}
 
 	s, err := state.Load()
@@ -759,7 +777,7 @@ func cmdConnectDesktop(args []string) error {
 	if err := requireInstances(s); err != nil {
 		return err
 	}
-	names, err := targets(s, args)
+	names, err := targets(s, rest)
 	if err != nil {
 		return err
 	}
@@ -1094,7 +1112,7 @@ func cmdHelp() {
 		{"health [name]", "Hit health endpoint(s) directly"},
 		{"open [name]", "Open Web UI in browser"},
 		{"config", "Print MCP config for ~/.claude/settings.json"},
-		{"connect desktop [name]", "Write Claude Desktop's config to launch instance(s) via mcp-bridge"},
+		{"connect desktop [name]", "Write Claude Desktop's config to launch instance(s) via mcp-bridge (--config-path to override the file location)"},
 		{"mcp-bridge <name>", "stdio<->HTTP bridge for Claude Desktop (low-level; used as a subprocess)"},
 		{"version", "Show CLI version and default server image"},
 		{"help", "Show this help"},
