@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -18,6 +19,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/spf13/pflag"
 
 	"github.com/bradygerndt/project-brain/cli/internal/bridge"
 	"github.com/bradygerndt/project-brain/cli/internal/config"
@@ -105,32 +108,18 @@ func main() {
 
 // --- flag parsing ---
 
-// extractFlag pulls "--name value" out of args wherever it appears,
-// returning the remaining positional args and the flag's value (or "").
-func extractFlag(args []string, name string) (positional []string, value string) {
-	for i := 0; i < len(args); i++ {
-		if args[i] == name && i+1 < len(args) {
-			value = args[i+1]
-			positional = append(positional, args[:i]...)
-			positional = append(positional, args[i+2:]...)
-			return positional, value
-		}
-	}
-	return args, ""
-}
-
-// extractBoolFlag pulls a no-value flag (e.g. "--force") out of args
-// wherever it appears, returning the remaining positional args and whether
-// it was present.
-func extractBoolFlag(args []string, name string) (positional []string, present bool) {
-	for _, a := range args {
-		if a == name {
-			present = true
-			continue
-		}
-		positional = append(positional, a)
-	}
-	return positional, present
+// newFlagSet returns a pflag.FlagSet configured the way every command here
+// wants it: silent on error/help (each caller reports its own usage string
+// through the same path every other command error takes, formatted by
+// main()'s single ui.Err call, instead of pflag's own stderr writer).
+// pflag (not the stdlib flag package) specifically because its parser
+// doesn't stop at the first positional arg — flags can appear anywhere
+// relative to positionals, matching this CLI's existing documented usage
+// (e.g. "brain add work 3589 3590 --tag edge") with no extra code needed.
+func newFlagSet(name string) *pflag.FlagSet {
+	fs := pflag.NewFlagSet(name, pflag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	return fs
 }
 
 // resolveImage picks the image for a new/updated instance: --image wins
@@ -400,15 +389,13 @@ func cmdLogs(args []string) error {
 	if err := docker.CheckAvailable(); err != nil {
 		return err
 	}
-	follow := false
-	filtered := args[:0:0]
-	for _, a := range args {
-		if a == "-f" || a == "--follow" {
-			follow = true
-		} else {
-			filtered = append(filtered, a)
-		}
+	fs := newFlagSet("logs")
+	var follow bool
+	fs.BoolVarP(&follow, "follow", "f", false, "follow log output")
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("%s\nusage: brain logs [name] [-f | --follow]", err)
 	}
+	filtered := fs.Args()
 
 	s, err := state.Load()
 	if err != nil {
@@ -464,15 +451,28 @@ func cmdAdd(args []string) error {
 		return cmdAddInteractive()
 	}
 
-	args, tag := extractFlag(args, "--tag")
-	args, image := extractFlag(args, "--image")
-	args, artifactsHost := extractFlag(args, "--artifacts-host")
-	args, host := extractFlag(args, "--host")
-
-	if len(args) < 3 {
-		return fmt.Errorf("usage: brain add <name> <mcp-port> <artifacts-port> [--tag T | --image I] [--artifacts-host HOST]\n       or:    brain add <name> <mcp-port> <artifacts-port> --host HOST   (register a remote instance; not managed by this brain)\n       or:    brain add                                                  (prompts for everything)\n       e.g.  brain add work 3589 3590\n       LAN artifact URLs are auto-detected; --artifacts-host only needed to override (e.g. for Tailscale):\n       e.g.  brain add remote 3589 3590 --artifacts-host 100.x.y.z\n       (already have \"home\"? use `brain update home --artifacts-host ...` instead)")
+	fs := newFlagSet("add")
+	var tag, image, artifactsHost, host string
+	fs.StringVar(&tag, "tag", "", "image tag from the default repo")
+	fs.StringVar(&image, "image", "", "full image ref (overrides --tag)")
+	fs.StringVar(&artifactsHost, "artifacts-host", "", "override the host used in artifact URLs")
+	fs.StringVar(&host, "host", "", "register a remote instance managed elsewhere (mutually exclusive with --tag/--image)")
+	const usage = "usage: brain add <name> <mcp-port> <artifacts-port> [--tag T | --image I] [--artifacts-host HOST]\n" +
+		"       or:    brain add <name> <mcp-port> <artifacts-port> --host HOST   (register a remote instance; not managed by this brain)\n" +
+		"       or:    brain add                                                  (prompts for everything)\n" +
+		"       e.g.  brain add work 3589 3590\n" +
+		"       LAN artifact URLs are auto-detected; --artifacts-host only needed to override (e.g. for Tailscale):\n" +
+		"       e.g.  brain add remote 3589 3590 --artifacts-host 100.x.y.z\n" +
+		"       (already have \"home\"? use `brain update home --artifacts-host ...` instead)"
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("%s\n%s", err, usage)
 	}
-	name, mcpStr, artStr := args[0], args[1], args[2]
+
+	rest := fs.Args()
+	if len(rest) < 3 {
+		return fmt.Errorf("%s", usage)
+	}
+	name, mcpStr, artStr := rest[0], rest[1], rest[2]
 
 	mcpPort, err1 := strconv.Atoi(mcpStr)
 	artPort, err2 := strconv.Atoi(artStr)
@@ -828,9 +828,15 @@ func cmdUpdate(args []string) error {
 	if err := docker.CheckAvailable(); err != nil {
 		return err
 	}
-	args, tag := extractFlag(args, "--tag")
-	args, image := extractFlag(args, "--image")
-	args, artifactsHost := extractFlag(args, "--artifacts-host")
+	fs := newFlagSet("update")
+	var tag, image, artifactsHost string
+	fs.StringVar(&tag, "tag", "", "image tag from the default repo")
+	fs.StringVar(&image, "image", "", "full image ref (overrides --tag)")
+	fs.StringVar(&artifactsHost, "artifacts-host", "", "override the host used in artifact URLs")
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("%s\nusage: brain update [name] [--tag T | --image I] [--artifacts-host HOST]", err)
+	}
+	rest := fs.Args()
 
 	s, err := state.Load()
 	if err != nil {
@@ -839,11 +845,11 @@ func cmdUpdate(args []string) error {
 	if err := requireInstances(s); err != nil {
 		return err
 	}
-	names, err := targets(s, args)
+	names, err := targets(s, rest)
 	if err != nil {
 		return err
 	}
-	explicit := explicitTarget(args)
+	explicit := explicitTarget(rest)
 
 	changed := false
 	for _, name := range names {
@@ -999,11 +1005,18 @@ func cmdRestore(args []string) error {
 	if err := docker.CheckAvailable(); err != nil {
 		return err
 	}
-	args, force := extractBoolFlag(args, "--force")
-	if len(args) < 2 {
-		return fmt.Errorf("usage: brain restore <name> <backup-file> [--force]")
+	fs := newFlagSet("restore")
+	var force bool
+	fs.BoolVar(&force, "force", false, "overwrite an existing non-empty volume")
+	const usage = "usage: brain restore <name> <backup-file> [--force]"
+	if err := fs.Parse(args); err != nil {
+		return fmt.Errorf("%s\n%s", err, usage)
 	}
-	name, backupFile := args[0], args[1]
+	rest := fs.Args()
+	if len(rest) < 2 {
+		return fmt.Errorf("%s", usage)
+	}
+	name, backupFile := rest[0], rest[1]
 
 	s, err := state.Load()
 	if err != nil {
