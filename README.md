@@ -116,6 +116,7 @@ the repo itself so it's automatic for anyone who clones it.
 - [Access over Tailscale](docs/tailscale.md) — reach your instance from other devices
 - [Access over your LAN](docs/lan.md) — same, without Tailscale
 - [Connect Claude Desktop or the mobile/web app](docs/desktop-mobile.md) — these don't connect to an MCP URL directly like Claude Code does
+- [Backup and restore](docs/backup-restore.md) — snapshot an instance's data volume and restore it later
 
 ## `brain` CLI
 
@@ -134,6 +135,8 @@ from `ghcr.io/bradygerndt/project-brain`.
 | `brain add <name> <mcp-port> <artifacts-port>` | Register a new instance (`--tag`/`--image` to pick a server version, `--host` to register a [remote](#remote-instances) one instead) |
 | `brain remove <name>` | Remove an instance (data volume preserved) |
 | `brain update [name]` | Pull the latest (or `--tag`/`--image`-selected) server image and recreate instance(s) |
+| `brain backup <name> [outfile]` | Tar an instance's data volume to `outfile` (default: `./brain-<name>-<time>.tar.gz`) — see [backup and restore](docs/backup-restore.md) |
+| `brain restore <name> <file>` | Restore a backup into an instance's volume (`--force` to overwrite existing data) |
 | `brain health [name]` | Hit the health endpoint(s) directly |
 | `brain open [name]` | Open the web UI in your browser |
 | `brain config` | Print MCP config for `~/.claude/settings.json` |
@@ -182,6 +185,17 @@ the host instead. `brain ps`/`health` still check it over plain HTTP and label i
 `start`/`stop`/`restart`/`logs`/`update` all refuse on it with a clear error, since there's no
 local container for them to act on. See [Access over Tailscale](docs/tailscale.md) for the full
 setup this is meant to pair with.
+
+### Backup and restore
+
+```bash
+brain backup home                          # writes ./brain-home-<timestamp>.tar.gz
+brain restore home ./brain-home-....tar.gz # restore into an already-registered instance
+```
+
+Tars an instance's whole data volume — `memory.sqlite`, its LanceDB vectors, artifact blobs —
+runs live by default, and refuses to restore over a running instance or a non-empty volume
+without `--force`. See [Backup and restore](docs/backup-restore.md) for details.
 
 ## MCP tools
 
