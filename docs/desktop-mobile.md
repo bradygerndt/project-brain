@@ -75,6 +75,15 @@ runs on a different machine than the instance itself (e.g. a laptop reaching a h
 [Tailscale](tailscale.md) or [LAN](lan.md) for registering it with `brain add ... --host`; you
 still run `brain connect desktop` on the machine Desktop is actually installed on.
 
+**Windows note:** if Desktop was installed via the Microsoft Store (an MSIX package), it runs
+inside a sandbox that silently redirects the classic `%APPDATA%\Claude\` path to a virtualized
+folder under `%LOCALAPPDATA%\Packages\Claude_...\LocalCache\Roaming\Claude\` — a tool writing to
+the classic path never reaches the file that install actually reads, so Desktop just looks like
+it's ignoring the config. `brain connect desktop` detects this automatically (it checks whether
+that virtualized folder exists and writes there instead), so you shouldn't need to do anything —
+but if Desktop's own "Edit Config" button shows a path under `AppData\Local\Packages\...` and you
+still don't see the tools after restarting, that confirms which install you're on.
+
 One gap worth knowing: removing an instance later (`brain remove work`) doesn't prune its
 `project-brain-work` entry from Desktop's config — it'll just fail quietly next time Desktop
 tries to launch it. `brain config`'s Claude Code output has the same characteristic today, so

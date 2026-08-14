@@ -34,6 +34,14 @@ func ConfigPath() (string, error) {
 		}
 		return filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json"), nil
 	case "windows":
+		localAppData := os.Getenv("LOCALAPPDATA")
+		if localAppData == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return "", err
+			}
+			localAppData = filepath.Join(home, "AppData", "Local")
+		}
 		appData := os.Getenv("APPDATA")
 		if appData == "" {
 			home, err := os.UserHomeDir()
@@ -42,10 +50,34 @@ func ConfigPath() (string, error) {
 			}
 			appData = filepath.Join(home, "AppData", "Roaming")
 		}
-		return filepath.Join(appData, "Claude", "claude_desktop_config.json"), nil
+		return windowsConfigPath(localAppData, appData), nil
 	default:
 		return "", fmt.Errorf("Claude Desktop has no Linux build (this includes WSL) — there's no config file here for brain to write.\nRun `brain connect desktop` on the macOS or Windows machine that actually runs Claude Desktop instead")
 	}
+}
+
+// windowsMSIXPackageFamily is the Microsoft Store / MSIX build's package
+// family name — the publisher-hash suffix is deterministic from the
+// package's signing identity, not per-user or per-machine, so it's the
+// same for every install of the official package.
+const windowsMSIXPackageFamily = "Claude_pzs8sxrjxfjjc"
+
+// windowsConfigPath picks between Claude Desktop's two possible Windows
+// config locations. The classic installer writes/reads
+// %APPDATA%\Claude\claude_desktop_config.json, but the Microsoft Store/MSIX
+// build runs inside an AppContainer that transparently redirects %APPDATA%
+// to a per-package virtualized folder — so a tool writing to the classic
+// path never reaches the file an MSIX-installed Desktop actually reads,
+// and the app just looks like it's ignoring the config entirely. Detect by
+// existence: the virtualized folder is created at MSIX install time (it
+// isn't a guess brain has to hardcode blindly), so if it's there, that's
+// the real config location; otherwise fall back to the classic path.
+func windowsConfigPath(localAppData, appData string) string {
+	msixDir := filepath.Join(localAppData, "Packages", windowsMSIXPackageFamily, "LocalCache", "Roaming", "Claude")
+	if info, err := os.Stat(msixDir); err == nil && info.IsDir() {
+		return filepath.Join(msixDir, "claude_desktop_config.json")
+	}
+	return filepath.Join(appData, "Claude", "claude_desktop_config.json")
 }
 
 // Entry is one mcpServers block: the local command Desktop should spawn to

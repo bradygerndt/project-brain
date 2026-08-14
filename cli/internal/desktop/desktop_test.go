@@ -201,6 +201,32 @@ func TestMerge_NonObjectMcpServers_Refuses(t *testing.T) {
 	}
 }
 
+func TestWindowsConfigPath_PrefersMSIXDirWhenItExists(t *testing.T) {
+	localAppData := t.TempDir()
+	appData := t.TempDir()
+	msixDir := filepath.Join(localAppData, "Packages", windowsMSIXPackageFamily, "LocalCache", "Roaming", "Claude")
+	if err := os.MkdirAll(msixDir, 0o755); err != nil {
+		t.Fatalf("seeding msix dir: %v", err)
+	}
+
+	got := windowsConfigPath(localAppData, appData)
+	want := filepath.Join(msixDir, "claude_desktop_config.json")
+	if got != want {
+		t.Errorf("windowsConfigPath = %q, want %q", got, want)
+	}
+}
+
+func TestWindowsConfigPath_FallsBackToClassicWhenNoMSIXDir(t *testing.T) {
+	localAppData := t.TempDir()
+	appData := t.TempDir()
+
+	got := windowsConfigPath(localAppData, appData)
+	want := filepath.Join(appData, "Claude", "claude_desktop_config.json")
+	if got != want {
+		t.Errorf("windowsConfigPath = %q, want %q", got, want)
+	}
+}
+
 func readDoc(t *testing.T, path string) map[string]any {
 	t.Helper()
 	raw, err := os.ReadFile(path)
