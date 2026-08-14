@@ -471,7 +471,12 @@ func cmdAdd(args []string) error {
 		return fmt.Errorf("--host can't be combined with --tag/--image — a remote instance isn't a locally-pulled image")
 	}
 
-	s, err := loadSeeded()
+	// Deliberately state.Load, not loadSeeded: add is what defines the
+	// first instance, so it must not race a phantom local "home" seed
+	// into existence first — that's real for --host callers with no
+	// local instances at all, and wrong even for local callers naming
+	// their first instance something other than "home".
+	s, err := state.Load()
 	if err != nil {
 		return err
 	}
