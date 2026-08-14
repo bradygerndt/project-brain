@@ -137,6 +137,7 @@ from `ghcr.io/bradygerndt/project-brain`.
 | `brain health [name]` | Hit the health endpoint(s) directly |
 | `brain open [name]` | Open the web UI in your browser |
 | `brain config` | Print MCP config for `~/.claude/settings.json` |
+| `brain mcp-bridge <name>` | Low-level stdio↔HTTP bridge to an instance's `/mcp` — see [below](#claude-desktop) |
 | `brain version` | Show CLI version and its default server image tag |
 | `brain help` | Show all commands |
 
@@ -182,6 +183,16 @@ the host instead. `brain ps`/`health` still check it over plain HTTP and label i
 `start`/`stop`/`restart`/`logs`/`update` all refuse on it with a clear error, since there's no
 local container for them to act on. See [Access over Tailscale](docs/tailscale.md) for the full
 setup this is meant to pair with.
+
+### Claude Desktop
+
+Unlike Claude Code, Claude Desktop can't connect to a bare MCP URL — its config only knows how
+to launch a local stdio subprocess. `brain mcp-bridge <name>` is that subprocess: it resolves
+`<name>` in `instances.yaml`, then translates Desktop's stdio JSON-RPC framing to/from HTTP calls
+against the instance's `/mcp` endpoint (including session-header bookkeeping). It's a native
+replacement for the third-party `mcp-remote`/`npx` bridge other MCP servers typically need,
+so connecting Desktop stays dependency-free. Most users shouldn't invoke `mcp-bridge` by hand —
+`brain connect desktop` (coming soon) will write Desktop's config to launch it automatically.
 
 ## MCP tools
 
