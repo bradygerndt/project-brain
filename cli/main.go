@@ -174,6 +174,15 @@ func targets(s *state.State, args []string) ([]string, error) {
 	return sortedNames(s), nil
 }
 
+// explicitTarget reports whether targets(s, args) resolved to a single
+// user-named instance rather than "all instances" (the no-name case). The
+// distinction matters for the Host-set guard: an explicitly named remote
+// instance should hard-refuse, while "all instances" should just skip it
+// with a note.
+func explicitTarget(args []string) bool {
+	return len(args) > 0 && !strings.HasPrefix(args[0], "-")
+}
+
 // --- commands ---
 
 func cmdStart(args []string) error {
@@ -188,8 +197,16 @@ func cmdStart(args []string) error {
 	if err != nil {
 		return err
 	}
+	explicit := explicitTarget(args)
 	for _, name := range names {
 		inst := s.Instances[name]
+		if err := state.RequireManaged(name, inst, "start"); err != nil {
+			if explicit {
+				return err
+			}
+			ui.Info("skipping %s (remote, not managed here)", name)
+			continue
+		}
 		container := state.ContainerName(name)
 
 		if err := docker.VolumeEnsure(state.DataVolume(name)); err != nil {
@@ -248,7 +265,15 @@ func cmdStop(args []string) error {
 	if err != nil {
 		return err
 	}
+	explicit := explicitTarget(args)
 	for _, name := range names {
+		if err := state.RequireManaged(name, s.Instances[name], "stop"); err != nil {
+			if explicit {
+				return err
+			}
+			ui.Info("skipping %s (remote, not managed here)", name)
+			continue
+		}
 		ui.Info("Stopping brain-%s…", name)
 		if err := docker.Stop(state.ContainerName(name)); err != nil {
 			ui.Err("%s: %s", name, err.Error())
@@ -270,7 +295,15 @@ func cmdRestart(args []string) error {
 	if err != nil {
 		return err
 	}
+	explicit := explicitTarget(args)
 	for _, name := range names {
+		if err := state.RequireManaged(name, s.Instances[name], "restart"); err != nil {
+			if explicit {
+				return err
+			}
+			ui.Info("skipping %s (remote, not managed here)", name)
+			continue
+		}
 		if err := docker.Restart(state.ContainerName(name)); err != nil {
 			ui.Err("%s: %s", name, err.Error())
 		}
@@ -293,20 +326,35 @@ func cmdPs(_ []string) error {
 	ui.Bold("\nBrain instances:\n")
 	for _, name := range names {
 		inst := s.Instances[name]
-		h := health.Fetch(inst.MCPPort)
-		status := ui.DimStr("offline")
+		remote := inst.Host != ""
+		fetchHost := "127.0.0.1"
+		if remote {
+			fetchHost = inst.Host
+		}
+		h := health.Fetch(fetchHost, inst.MCPPort)
+		var status string
 		sessions := ""
-		if h != nil && h.OK {
+		switch {
+		case h != nil && h.OK:
 			status = ui.GreenStr("running")
+			if remote {
+				status += " " + ui.DimStr("(remote)")
+			}
 			plural := "s"
 			if h.Sessions == 1 {
 				plural = ""
 			}
 			sessions = fmt.Sprintf(" · %d session%s", h.Sessions, plural)
+		case remote:
+			// Distinct from "offline": a remote entry has no local
+			// Docker container to be down, it's just unreachable.
+			status = ui.DimStr("(remote)")
+		default:
+			status = ui.DimStr("offline")
 		}
-		mcpURL := ui.DimStr(fmt.Sprintf("mcp: http://127.0.0.1:%d/mcp", inst.MCPPort))
-		uiURL := ui.DimStr(fmt.Sprintf("ui: http://127.0.0.1:%d/ui", inst.MCPPort))
-		artifactsURL := ui.DimStr(fmt.Sprintf("artifacts: http://127.0.0.1:%d/artifacts", inst.ArtifactsPort))
+		mcpURL := ui.DimStr(fmt.Sprintf("mcp: http://%s:%d/mcp", fetchHost, inst.MCPPort))
+		uiURL := ui.DimStr(fmt.Sprintf("ui: http://%s:%d/ui", fetchHost, inst.MCPPort))
+		artifactsURL := ui.DimStr(fmt.Sprintf("artifacts: http://%s:%d/artifacts", fetchHost, inst.ArtifactsPort))
 		fmt.Printf("  %-16s %s%s\n      %s  %s  %s\n", ui.Magenta(name), status, sessions, mcpURL, uiURL, artifactsURL)
 	}
 	fmt.Println()
@@ -335,6 +383,20 @@ func cmdLogs(args []string) error {
 	if err != nil {
 		return err
 	}
+	explicit := explicitTarget(filtered)
+
+	managed := names[:0:0]
+	for _, name := range names {
+		if err := state.RequireManaged(name, s.Instances[name], "show logs for"); err != nil {
+			if explicit {
+				return err
+			}
+			ui.Info("skipping %s (remote, not managed here)", name)
+			continue
+		}
+		managed = append(managed, name)
+	}
+	names = managed
 
 	if len(names) == 1 {
 		return docker.Logs(state.ContainerName(names[0]), follow)
@@ -358,9 +420,10 @@ func cmdAdd(args []string) error {
 	args, tag := extractFlag(args, "--tag")
 	args, image := extractFlag(args, "--image")
 	args, artifactsHost := extractFlag(args, "--artifacts-host")
+	args, host := extractFlag(args, "--host")
 
 	if len(args) < 3 {
-		return fmt.Errorf("usage: brain add <name> <mcp-port> <artifacts-port> [--tag T | --image I] [--artifacts-host HOST]\n       e.g.  brain add work 3589 3590\n       LAN artifact URLs are auto-detected; --artifacts-host only needed to override (e.g. for Tailscale):\n       e.g.  brain add remote 3589 3590 --artifacts-host 100.x.y.z\n       (already have \"home\"? use `brain update home --artifacts-host ...` instead)")
+		return fmt.Errorf("usage: brain add <name> <mcp-port> <artifacts-port> [--tag T | --image I] [--artifacts-host HOST]\n       or:    brain add <name> <mcp-port> <artifacts-port> --host HOST   (register a remote instance; not managed by this brain)\n       e.g.  brain add work 3589 3590\n       LAN artifact URLs are auto-detected; --artifacts-host only needed to override (e.g. for Tailscale):\n       e.g.  brain add remote 3589 3590 --artifacts-host 100.x.y.z\n       (already have \"home\"? use `brain update home --artifacts-host ...` instead)")
 	}
 	name, mcpStr, artStr := args[0], args[1], args[2]
 
@@ -370,6 +433,10 @@ func cmdAdd(args []string) error {
 		return fmt.Errorf("ports must be integers")
 	}
 
+	if host != "" && (tag != "" || image != "") {
+		return fmt.Errorf("--host can't be combined with --tag/--image — a remote instance isn't a locally-pulled image")
+	}
+
 	s, err := loadSeeded()
 	if err != nil {
 		return err
@@ -377,18 +444,32 @@ func cmdAdd(args []string) error {
 	if _, exists := s.Instances[name]; exists {
 		return fmt.Errorf(`instance "%s" already exists`, name)
 	}
-	if conflict := s.PortConflict(mcpPort, artPort, ""); conflict != "" {
-		return fmt.Errorf("port conflict with existing instance %q", conflict)
-	}
 
-	s.Instances[name] = &state.Instance{
+	inst := &state.Instance{
 		MCPPort:       mcpPort,
 		ArtifactsPort: artPort,
-		Image:         resolveImage(tag, image),
-		ArtifactsHost: artifactsHost,
+		Host:          host,
 	}
+	if host == "" {
+		// Nothing is bound locally for a remote entry, so the local
+		// port-conflict check doesn't apply — the numbers just describe
+		// where the remote instance already lives.
+		if conflict := s.PortConflict(mcpPort, artPort, ""); conflict != "" {
+			return fmt.Errorf("port conflict with existing instance %q", conflict)
+		}
+		inst.Image = resolveImage(tag, image)
+		inst.ArtifactsHost = artifactsHost
+	}
+	s.Instances[name] = inst
 	if err := state.Save(s); err != nil {
 		return err
+	}
+
+	if host != "" {
+		ui.Ok(`Registered remote instance "%s" -> %s:%d (not managed by this brain)`, name, host, mcpPort)
+		ui.Info(fmt.Sprintf("MCP URL: http://%s:%d/mcp", host, mcpPort))
+		ui.Info(fmt.Sprintf("UI:      http://%s:%d/ui", host, mcpPort))
+		return nil
 	}
 
 	ui.Ok(`Added instance "%s" (MCP :%d, artifacts :%d)`, name, mcpPort, artPort)
@@ -439,7 +520,11 @@ func cmdHealth(args []string) error {
 	}
 	for _, name := range names {
 		inst := s.Instances[name]
-		h := health.Fetch(inst.MCPPort)
+		fetchHost := "127.0.0.1"
+		if inst.Host != "" {
+			fetchHost = inst.Host
+		}
+		h := health.Fetch(fetchHost, inst.MCPPort)
 		if h != nil && h.OK {
 			plural := "s"
 			if h.Sessions == 1 {
@@ -524,10 +609,18 @@ func cmdUpdate(args []string) error {
 	if err != nil {
 		return err
 	}
+	explicit := explicitTarget(args)
 
 	changed := false
 	for _, name := range names {
 		inst := s.Instances[name]
+		if err := state.RequireManaged(name, inst, "update"); err != nil {
+			if explicit {
+				return err
+			}
+			ui.Info("skipping %s (remote, not managed here)", name)
+			continue
+		}
 		newImage := inst.Image
 		if tag != "" || image != "" {
 			newImage = resolveImage(tag, image)
@@ -603,7 +696,7 @@ func cmdHelp() {
 		{"restart [name]", "Restart instance(s)"},
 		{"ps", "List all instances and health status"},
 		{"logs [name] [-f]", "Show logs (follow with -f)"},
-		{"add <name> <mcp> <art>", "Add a new instance (--tag/--image, --artifacts-host)"},
+		{"add <name> <mcp> <art>", "Add a new instance (--tag/--image, --artifacts-host, --host for remote)"},
 		{"remove <name>", "Remove an instance (data volume preserved)"},
 		{"update [name]", "Pull + recreate instance(s) (--tag/--image, --artifacts-host)"},
 		{"health [name]", "Hit health endpoint(s) directly"},

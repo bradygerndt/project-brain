@@ -17,11 +17,12 @@ type Status struct {
 
 var client = &http.Client{Timeout: 2 * time.Second}
 
-// Fetch hits http://127.0.0.1:{port}/health and returns nil on any failure
+// Fetch hits http://{host}:{port}/health and returns nil on any failure
 // (connection refused, timeout, non-2xx, bad JSON) — mirrors the "offline"
-// semantics used by `brain ps`.
-func Fetch(port int) *Status {
-	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/health", port))
+// semantics used by `brain ps`. host is "127.0.0.1" for Docker-managed
+// instances, or a remote instance's registered Host.
+func Fetch(host string, port int) *Status {
+	resp, err := client.Get(fmt.Sprintf("http://%s:%d/health", host, port))
 	if err != nil {
 		return nil
 	}
