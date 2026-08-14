@@ -192,7 +192,8 @@ to launch a local stdio subprocess. `brain mcp-bridge <name>` is that subprocess
 against the instance's `/mcp` endpoint (including session-header bookkeeping). It's a native
 replacement for the third-party `mcp-remote`/`npx` bridge other MCP servers typically need,
 so connecting Desktop stays dependency-free. Most users shouldn't invoke `mcp-bridge` by hand —
-`brain connect desktop` (coming soon) will write Desktop's config to launch it automatically.
+run `brain connect desktop [name]` instead, which writes Desktop's config to launch it
+automatically. See [docs/desktop-mobile.md](docs/desktop-mobile.md) for details.
 
 ## MCP tools
 
