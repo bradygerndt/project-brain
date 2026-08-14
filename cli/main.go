@@ -5,18 +5,23 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
+	"github.com/bradygerndt/project-brain/cli/internal/bridge"
 	"github.com/bradygerndt/project-brain/cli/internal/config"
+	"github.com/bradygerndt/project-brain/cli/internal/desktop"
 	"github.com/bradygerndt/project-brain/cli/internal/docker"
 	"github.com/bradygerndt/project-brain/cli/internal/health"
 	"github.com/bradygerndt/project-brain/cli/internal/hostip"
@@ -72,6 +77,10 @@ func main() {
 		err = cmdOpen(args)
 	case "config":
 		err = cmdConfig(args)
+	case "mcp-bridge":
+		err = cmdMcpBridge(args)
+	case "connect":
+		err = cmdConnect(args)
 	case "update":
 		err = cmdUpdate(args)
 	case "backup":
@@ -618,6 +627,103 @@ func cmdConfig(_ []string) error {
 	return nil
 }
 
+// cmdConnect dispatches `brain connect <target>`. Only "desktop" exists
+// today; the two-level shape leaves room for other clients later without
+// a top-level command per client.
+func cmdConnect(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: brain connect desktop [name]")
+	}
+	target := args[0]
+	rest := args[1:]
+	switch target {
+	case "desktop":
+		return cmdConnectDesktop(rest)
+	default:
+		return fmt.Errorf(`unknown connect target %q (only "desktop" is supported)`, target)
+	}
+}
+
+// cmdConnectDesktop writes (or merges into) Claude Desktop's
+// claude_desktop_config.json so Desktop launches `brain mcp-bridge <name>`
+// for each target instance. See cli/internal/desktop for path resolution
+// and the actual merge/backup logic.
+//
+// desktop.ConfigPath is resolved before anything else touches disk or even
+// loads instances.yaml, so the "no Desktop app on this OS" case (Linux/WSL)
+// fails fast without writing anything.
+func cmdConnectDesktop(args []string) error {
+	path, err := desktop.ConfigPath()
+	if err != nil {
+		return err
+	}
+
+	s, err := loadSeeded()
+	if err != nil {
+		return err
+	}
+	names, err := targets(s, args)
+	if err != nil {
+		return err
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("locating this binary: %w", err)
+	}
+
+	entries := make(map[string]desktop.Entry, len(names))
+	for _, name := range names {
+		entries[fmt.Sprintf("project-brain-%s", name)] = desktop.Entry{
+			Command: exe,
+			Args:    []string{"mcp-bridge", name},
+		}
+	}
+
+	if err := desktop.Merge(path, entries); err != nil {
+		return err
+	}
+
+	ui.Ok("Updated %s", path)
+	for _, name := range names {
+		ui.Info(`  project-brain-%s -> "%s mcp-bridge %s"`, name, exe, name)
+	}
+	ui.Info("Restart Claude Desktop completely (quit, not just close the window) to pick this up.")
+	return nil
+}
+
+// cmdMcpBridge is the thin CLI entry point for the stdio<->HTTP proxy;
+// see cli/internal/bridge for the actual proxy logic. This is the
+// subprocess Claude Desktop's config launches per instance — stdout is
+// reserved for JSON-RPC framing, so nothing here (or in bridge.Run) may
+// write anything else to it.
+func cmdMcpBridge(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: brain mcp-bridge <name>")
+	}
+	name := args[0]
+
+	s, err := loadSeeded()
+	if err != nil {
+		return err
+	}
+	inst, ok := s.Instances[name]
+	if !ok {
+		return fmt.Errorf(`instance "%s" not found`, name)
+	}
+
+	host := inst.Host
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	url := fmt.Sprintf("http://%s:%d/mcp", host, inst.MCPPort)
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	return bridge.New(url).Run(ctx, os.Stdin, os.Stdout, os.Stderr)
+}
+
 func cmdUpdate(args []string) error {
 	if err := docker.CheckAvailable(); err != nil {
 		return err
@@ -866,6 +972,8 @@ func cmdHelp() {
 		{"health [name]", "Hit health endpoint(s) directly"},
 		{"open [name]", "Open Web UI in browser"},
 		{"config", "Print MCP config for ~/.claude/settings.json"},
+		{"connect desktop [name]", "Write Claude Desktop's config to launch instance(s) via mcp-bridge"},
+		{"mcp-bridge <name>", "stdio<->HTTP bridge for Claude Desktop (low-level; used as a subprocess)"},
 		{"version", "Show CLI version and default server image"},
 		{"help", "Show this help"},
 	}
