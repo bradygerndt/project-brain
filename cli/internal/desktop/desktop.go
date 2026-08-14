@@ -34,6 +34,14 @@ func ConfigPath() (string, error) {
 		}
 		return filepath.Join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json"), nil
 	case "windows":
+		localAppData := os.Getenv("LOCALAPPDATA")
+		if localAppData == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return "", err
+			}
+			localAppData = filepath.Join(home, "AppData", "Local")
+		}
 		appData := os.Getenv("APPDATA")
 		if appData == "" {
 			home, err := os.UserHomeDir()
@@ -42,10 +50,39 @@ func ConfigPath() (string, error) {
 			}
 			appData = filepath.Join(home, "AppData", "Roaming")
 		}
-		return filepath.Join(appData, "Claude", "claude_desktop_config.json"), nil
+		return windowsConfigPath(localAppData, appData), nil
 	default:
 		return "", fmt.Errorf("Claude Desktop has no Linux build (this includes WSL) — there's no config file here for brain to write.\nRun `brain connect desktop` on the macOS or Windows machine that actually runs Claude Desktop instead")
 	}
+}
+
+// windowsConfigPath picks between Claude Desktop's two possible Windows
+// config locations. The classic installer writes/reads
+// %APPDATA%\Claude\claude_desktop_config.json, but the Microsoft Store/MSIX
+// build runs inside an AppContainer that transparently redirects %APPDATA%
+// to a per-package virtualized folder under
+// %LOCALAPPDATA%\Packages\<PackageFamilyName>\LocalCache\Roaming\ — so a
+// tool writing to the classic path never reaches the file an
+// MSIX-installed Desktop actually reads, and the app just looks like it's
+// ignoring the config entirely.
+//
+// The package family name's publisher-hash suffix is deterministic for a
+// given signing identity, but that's not a permanent guarantee — a future
+// re-sign (cert rotation, publisher change) could shift it. Rather than
+// hardcoding today's exact name, glob for any "Claude_*" package and only
+// trust a match that actually contains LocalCache\Roaming\Claude, so this
+// keeps working without a code change if the suffix ever does change, at
+// the (very unlikely) cost of trusting an unrelated package that happens
+// to be named "Claude_..." AND coincidentally has that exact subfolder
+// structure.
+func windowsConfigPath(localAppData, appData string) string {
+	matches, _ := filepath.Glob(filepath.Join(localAppData, "Packages", "Claude_*", "LocalCache", "Roaming", "Claude"))
+	for _, dir := range matches {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			return filepath.Join(dir, "claude_desktop_config.json")
+		}
+	}
+	return filepath.Join(appData, "Claude", "claude_desktop_config.json")
 }
 
 // Entry is one mcpServers block: the local command Desktop should spawn to
