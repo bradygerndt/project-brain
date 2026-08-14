@@ -10,12 +10,14 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/bradygerndt/project-brain/cli/internal/bridge"
 	"github.com/bradygerndt/project-brain/cli/internal/config"
@@ -35,6 +37,11 @@ var (
 )
 
 const imageRepo = "ghcr.io/bradygerndt/project-brain"
+
+// alpineImage is the throwaway container image `backup`/`restore` use to
+// read/write an instance's data volume — small, ubiquitous, and already
+// what the plan's own `docker run ... tar` recipe assumes.
+const alpineImage = "alpine"
 
 func imageRef(tag string) string {
 	return imageRepo + ":" + tag
@@ -76,6 +83,10 @@ func main() {
 		err = cmdConnect(args)
 	case "update":
 		err = cmdUpdate(args)
+	case "backup":
+		err = cmdBackup(args)
+	case "restore":
+		err = cmdRestore(args)
 	case "version":
 		cmdVersion()
 	case "help":
@@ -105,6 +116,20 @@ func extractFlag(args []string, name string) (positional []string, value string)
 		}
 	}
 	return args, ""
+}
+
+// extractBoolFlag pulls a no-value flag (e.g. "--force") out of args
+// wherever it appears, returning the remaining positional args and whether
+// it was present.
+func extractBoolFlag(args []string, name string) (positional []string, present bool) {
+	for _, a := range args {
+		if a == name {
+			present = true
+			continue
+		}
+		positional = append(positional, a)
+	}
+	return positional, present
 }
 
 // resolveImage picks the image for a new/updated instance: --image wins
@@ -789,6 +814,143 @@ func cmdUpdate(args []string) error {
 	return nil
 }
 
+// ensureAlpineImage pulls the small throwaway image backup/restore run a
+// container from, printing progress the first time — mirrors how cmdStart
+// pulls a missing server image rather than letting `docker run` block
+// silently on its own implicit pull.
+func ensureAlpineImage() error {
+	if docker.ImageExistsLocally(alpineImage) {
+		return nil
+	}
+	ui.Info("Pulling %s (used to read/write the backup archive)…", alpineImage)
+	return docker.Pull(alpineImage)
+}
+
+// cmdBackup tars an instance's whole data volume to a file — whatever's in
+// memory.sqlite, its WAL, the LanceDB vectors dataset, and artifact blobs.
+// Deliberately not SQLite/LanceDB-aware: a portable volume snapshot rather
+// than logic that has to track internal schema changes. Runs against a live
+// instance by default (no --live/--force flag in v1) — memory_set already
+// writes SQLite and LanceDB via a fire-and-forget setImmediate, so the two
+// stores are already only eventually-consistent with each other during
+// normal operation; a live volume tar is no worse than that existing
+// steady state. The shared brain-hf-cache volume is deliberately excluded —
+// it's a re-downloadable model-weights cache, not instance data.
+func cmdBackup(args []string) error {
+	if err := docker.CheckAvailable(); err != nil {
+		return err
+	}
+	if len(args) < 1 {
+		return fmt.Errorf("usage: brain backup <name> [outfile]")
+	}
+	name := args[0]
+
+	s, err := loadSeeded()
+	if err != nil {
+		return err
+	}
+	inst, ok := s.Instances[name]
+	if !ok {
+		return fmt.Errorf(`instance "%s" not found`, name)
+	}
+	if err := state.RequireManaged(name, inst, "back up"); err != nil {
+		return err
+	}
+
+	outFile := fmt.Sprintf("brain-%s-%s.tar.gz", name, time.Now().Format("20060102-150405"))
+	if len(args) >= 2 {
+		outFile = args[1]
+	}
+	absOut, err := filepath.Abs(outFile)
+	if err != nil {
+		return err
+	}
+	outDir := filepath.Dir(absOut)
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		return err
+	}
+
+	if err := ensureAlpineImage(); err != nil {
+		return err
+	}
+
+	volume := state.DataVolume(name)
+	ui.Info("Backing up %s (volume %s) to %s…", name, volume, absOut)
+	if err := docker.BackupVolume(volume, outDir, filepath.Base(absOut)); err != nil {
+		return err
+	}
+	ui.Ok("Backed up %s to %s", name, absOut)
+	return nil
+}
+
+// cmdRestore repopulates an already-registered instance's data volume from a
+// backup produced by cmdBackup. Scoped narrowly on purpose: it assumes
+// `<name>` already exists via a normal `brain add` (ports/image are
+// host-specific and could conflict on a different target machine, so
+// restore doesn't try to recreate the registry entry) and only touches the
+// volume's contents.
+func cmdRestore(args []string) error {
+	if err := docker.CheckAvailable(); err != nil {
+		return err
+	}
+	args, force := extractBoolFlag(args, "--force")
+	if len(args) < 2 {
+		return fmt.Errorf("usage: brain restore <name> <backup-file> [--force]")
+	}
+	name, backupFile := args[0], args[1]
+
+	s, err := loadSeeded()
+	if err != nil {
+		return err
+	}
+	inst, ok := s.Instances[name]
+	if !ok {
+		return fmt.Errorf(`instance "%s" not found — register it first with "brain add"`, name)
+	}
+	if err := state.RequireManaged(name, inst, "restore"); err != nil {
+		return err
+	}
+
+	absBackup, err := filepath.Abs(backupFile)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(absBackup); err != nil {
+		return fmt.Errorf("backup file %q not found", backupFile)
+	}
+
+	// Refuse while running — the volume's data would be in active use by
+	// the server process (open SQLite handles, in-flight writes).
+	if docker.ContainerRunning(state.ContainerName(name)) {
+		return fmt.Errorf(`instance "%s" is running — stop it first: brain stop %s`, name, name)
+	}
+
+	if err := ensureAlpineImage(); err != nil {
+		return err
+	}
+
+	volume := state.DataVolume(name)
+	if err := docker.VolumeEnsure(volume); err != nil {
+		return err
+	}
+	if !force {
+		empty, err := docker.VolumeEmpty(volume)
+		if err != nil {
+			return err
+		}
+		if !empty {
+			return fmt.Errorf("volume %q already has data — pass --force to overwrite it", volume)
+		}
+	}
+
+	ui.Info("Restoring %s from %s into volume %s…", name, absBackup, volume)
+	if err := docker.RestoreVolume(volume, filepath.Dir(absBackup), filepath.Base(absBackup)); err != nil {
+		return err
+	}
+	ui.Ok("Restored %s. Start it with: brain start %s", name, name)
+	return nil
+}
+
 func cmdVersion() {
 	fmt.Printf("brain %s\n", version)
 	fmt.Printf("default server image: %s\n", imageRef(defaultImageTag))
@@ -805,6 +967,8 @@ func cmdHelp() {
 		{"add <name> <mcp> <art>", "Add a new instance (--tag/--image, --artifacts-host, --host for remote)"},
 		{"remove <name>", "Remove an instance (data volume preserved)"},
 		{"update [name]", "Pull + recreate instance(s) (--tag/--image, --artifacts-host)"},
+		{"backup <name> [outfile]", "Tar an instance's data volume to outfile (default: ./brain-<name>-<time>.tar.gz)"},
+		{"restore <name> <file>", "Restore a backup into an instance's volume (--force to overwrite existing data)"},
 		{"health [name]", "Hit health endpoint(s) directly"},
 		{"open [name]", "Open Web UI in browser"},
 		{"config", "Print MCP config for ~/.claude/settings.json"},

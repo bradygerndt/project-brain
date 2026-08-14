@@ -156,6 +156,64 @@ func Logs(containerName string, follow bool) error {
 	return runInherit(args...)
 }
 
+// ContainerRunning reports whether a container currently exists AND is
+// running — distinct from ContainerExists, which is also true for a
+// stopped-but-not-removed container. Used by `restore` to refuse touching a
+// volume that's currently in use.
+func ContainerRunning(name string) bool {
+	out, err := run("inspect", "-f", "{{.State.Running}}", name)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(out) == "true"
+}
+
+// BackupVolume tars a volume's entire contents to outFile inside outDir, via
+// a throwaway alpine container:
+//
+//	docker run --rm -v <volume>:/data:ro -v <outDir>:/backup alpine \
+//	  tar czf /backup/<outFile> -C /data .
+//
+// Deliberately whole-volume rather than SQLite/LanceDB-aware — future-proof
+// against internal schema changes, and produces one portable file. outDir
+// must already exist and be an absolute host path (it's a bind mount, not a
+// named volume).
+func BackupVolume(volume, outDir, outFile string) error {
+	_, err := run(
+		"run", "--rm",
+		"-v", volume+":/data:ro",
+		"-v", outDir+":/backup",
+		"alpine",
+		"tar", "czf", "/backup/"+outFile, "-C", "/data", ".",
+	)
+	return err
+}
+
+// RestoreVolume extracts a tar.gz backup (backupFile inside backupDir) into
+// volume, via the same throwaway-alpine-container approach as BackupVolume.
+// backupDir must already exist and be an absolute host path.
+func RestoreVolume(volume, backupDir, backupFile string) error {
+	_, err := run(
+		"run", "--rm",
+		"-v", volume+":/data",
+		"-v", backupDir+":/backup:ro",
+		"alpine",
+		"tar", "xzf", "/backup/"+backupFile, "-C", "/data",
+	)
+	return err
+}
+
+// VolumeEmpty reports whether a volume has no contents. A volume that
+// doesn't exist yet reads as empty too — `docker run` auto-creates named
+// volumes on first mount, so there's nothing to lose either way.
+func VolumeEmpty(volume string) (bool, error) {
+	out, err := run("run", "--rm", "-v", volume+":/data:ro", "alpine", "sh", "-c", "ls -A /data")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) == "", nil
+}
+
 // LogsPrefixed streams one container's logs to w, prefixing every line
 // with "[name] " — used to merge multiple instances' logs onto one
 // stream, since plain `docker logs` (unlike `docker compose logs`) can't
