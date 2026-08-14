@@ -204,7 +204,10 @@ func TestMerge_NonObjectMcpServers_Refuses(t *testing.T) {
 func TestWindowsConfigPath_PrefersMSIXDirWhenItExists(t *testing.T) {
 	localAppData := t.TempDir()
 	appData := t.TempDir()
-	msixDir := filepath.Join(localAppData, "Packages", windowsMSIXPackageFamily, "LocalCache", "Roaming", "Claude")
+	// Deliberately not today's real "Claude_pzs8sxrjxfjjc" — proves the
+	// match is a glob, not a hardcoded name, so a future publisher-hash
+	// change wouldn't silently break this.
+	msixDir := filepath.Join(localAppData, "Packages", "Claude_somefuturehash", "LocalCache", "Roaming", "Claude")
 	if err := os.MkdirAll(msixDir, 0o755); err != nil {
 		t.Fatalf("seeding msix dir: %v", err)
 	}
@@ -224,6 +227,24 @@ func TestWindowsConfigPath_FallsBackToClassicWhenNoMSIXDir(t *testing.T) {
 	want := filepath.Join(appData, "Claude", "claude_desktop_config.json")
 	if got != want {
 		t.Errorf("windowsConfigPath = %q, want %q", got, want)
+	}
+}
+
+func TestWindowsConfigPath_IgnoresUnrelatedPackagesFolder(t *testing.T) {
+	localAppData := t.TempDir()
+	appData := t.TempDir()
+	// A Packages dir exists (as it would on any real Windows machine with
+	// other Store apps installed), but nothing matching "Claude_*" — must
+	// not false-positive on unrelated packages.
+	other := filepath.Join(localAppData, "Packages", "SomeOtherApp_abcdef123456")
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatalf("seeding unrelated package dir: %v", err)
+	}
+
+	got := windowsConfigPath(localAppData, appData)
+	want := filepath.Join(appData, "Claude", "claude_desktop_config.json")
+	if got != want {
+		t.Errorf("windowsConfigPath = %q, want %q (should ignore unrelated package)", got, want)
 	}
 }
 

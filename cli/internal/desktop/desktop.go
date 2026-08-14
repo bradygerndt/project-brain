@@ -56,26 +56,31 @@ func ConfigPath() (string, error) {
 	}
 }
 
-// windowsMSIXPackageFamily is the Microsoft Store / MSIX build's package
-// family name — the publisher-hash suffix is deterministic from the
-// package's signing identity, not per-user or per-machine, so it's the
-// same for every install of the official package.
-const windowsMSIXPackageFamily = "Claude_pzs8sxrjxfjjc"
-
 // windowsConfigPath picks between Claude Desktop's two possible Windows
 // config locations. The classic installer writes/reads
 // %APPDATA%\Claude\claude_desktop_config.json, but the Microsoft Store/MSIX
 // build runs inside an AppContainer that transparently redirects %APPDATA%
-// to a per-package virtualized folder — so a tool writing to the classic
-// path never reaches the file an MSIX-installed Desktop actually reads,
-// and the app just looks like it's ignoring the config entirely. Detect by
-// existence: the virtualized folder is created at MSIX install time (it
-// isn't a guess brain has to hardcode blindly), so if it's there, that's
-// the real config location; otherwise fall back to the classic path.
+// to a per-package virtualized folder under
+// %LOCALAPPDATA%\Packages\<PackageFamilyName>\LocalCache\Roaming\ — so a
+// tool writing to the classic path never reaches the file an
+// MSIX-installed Desktop actually reads, and the app just looks like it's
+// ignoring the config entirely.
+//
+// The package family name's publisher-hash suffix is deterministic for a
+// given signing identity, but that's not a permanent guarantee — a future
+// re-sign (cert rotation, publisher change) could shift it. Rather than
+// hardcoding today's exact name, glob for any "Claude_*" package and only
+// trust a match that actually contains LocalCache\Roaming\Claude, so this
+// keeps working without a code change if the suffix ever does change, at
+// the (very unlikely) cost of trusting an unrelated package that happens
+// to be named "Claude_..." AND coincidentally has that exact subfolder
+// structure.
 func windowsConfigPath(localAppData, appData string) string {
-	msixDir := filepath.Join(localAppData, "Packages", windowsMSIXPackageFamily, "LocalCache", "Roaming", "Claude")
-	if info, err := os.Stat(msixDir); err == nil && info.IsDir() {
-		return filepath.Join(msixDir, "claude_desktop_config.json")
+	matches, _ := filepath.Glob(filepath.Join(localAppData, "Packages", "Claude_*", "LocalCache", "Roaming", "Claude"))
+	for _, dir := range matches {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			return filepath.Join(dir, "claude_desktop_config.json")
+		}
 	}
 	return filepath.Join(appData, "Claude", "claude_desktop_config.json")
 }
