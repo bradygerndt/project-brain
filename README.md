@@ -80,17 +80,18 @@ $EDITOR ~/.config/brain/.env   # set ANTHROPIC_API_KEY=sk-ant-...
 ## Quick start
 
 **The overall flow:** each project-brain *instance* is a self-contained Docker container with
-its own memory (its own volume, its own MCP + artifacts ports). `brain start` boots the
-`home` instance seeded automatically on first run (MCP port `3579`, artifacts port `3580`), and
-`brain config` prints the block that tells Claude Code where to find it. From there you either
-connect `home` once and reuse it as one shared memory across every project, or give a
-particular project its own isolated instance — both are covered below.
+its own memory (its own volume, its own MCP + artifacts ports). Run `brain add` to register
+your first one, then `brain start` boots it and `brain config` prints the block that tells
+Claude Code where to find it. From there you either connect `home` once and reuse it as one
+shared memory across every project, or give a particular project its own isolated instance —
+both are covered below.
 
 ```bash
-brain start        # start all instances (requires Docker)
-brain ps           # check status
-brain config       # print MCP config to paste into ~/.claude/settings.json
-brain open         # open the web UI in your browser
+brain add           # prompts for name/ports/image
+brain start         # start all instances (requires Docker)
+brain ps            # check status
+brain config        # print MCP config to paste into ~/.claude/settings.json
+brain open          # open the web UI in your browser
 ```
 
 Add the printed config to `~/.claude/settings.json` under `"mcpServers"`, then restart Claude
