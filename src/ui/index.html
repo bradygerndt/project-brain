@@ -87,6 +87,14 @@
   .panel { display: none; }
   .panel.active { display: block; }
 
+  .value-sheet-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100; align-items: flex-end; justify-content: center; }
+  .value-sheet-backdrop.open { display: flex; }
+  .value-sheet { background: #1a1d2e; border: 1px solid #2d3154; border-bottom: none; border-radius: 12px 12px 0 0; width: 100%; max-width: 640px; max-height: 75vh; overflow-y: auto; padding: 16px; }
+  .value-sheet-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  .value-sheet-close { background: #2d3154; border: none; color: #94a3b8; width: 28px; height: 28px; flex-shrink: 0; border-radius: 6px; cursor: pointer; font-size: 0.9rem; }
+  .value-sheet-body { color: #e2e8f0; font-size: 0.9rem; line-height: 1.5; word-break: break-word; }
+  .value-sheet-body .score { display: block; margin-top: 10px; }
+
   @media (max-width: 700px) {
     header { padding: 10px 14px; gap: 6px 12px; }
     header h1 { font-size: 1rem; }
@@ -105,9 +113,7 @@
 
     .value { cursor: pointer; }
     .value .value-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
-    .value.expanded .value-text { display: block; -webkit-line-clamp: unset; overflow: visible; }
-    .value:not(.expanded)::after { content: 'tap to expand ▾'; display: block; font-size: 0.65rem; color: #64748b; margin-top: 2px; }
-    .value.expanded::after { content: 'tap to collapse ▴'; display: block; font-size: 0.65rem; color: #64748b; margin-top: 2px; }
+    .value::after { content: 'tap to expand ▾'; display: block; font-size: 0.65rem; color: #64748b; margin-top: 2px; }
 
     .artifact-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
 
@@ -197,6 +203,16 @@
 
 </main>
 
+<div class="value-sheet-backdrop" id="valueSheet" onclick="closeValueSheet(event)">
+  <div class="value-sheet" onclick="event.stopPropagation()">
+    <div class="value-sheet-header">
+      <span class="key" id="valueSheetKey"></span>
+      <button class="value-sheet-close" onclick="closeValueSheet()">✕</button>
+    </div>
+    <div class="value-sheet-body" id="valueSheetBody"></div>
+  </div>
+</div>
+
 <script>
 const BASE = '';
 let currentOffset = 0;
@@ -235,7 +251,7 @@ function renderMemoryTable(rows, isSearch = false) {
     const score = r._score != null ? `<br><span class="score">sim: ${(1 - r._score).toFixed(3)}</span>` : '';
     html += `<tr>
       <td><span class="key">${esc(r.key)}</span><br><span class="ns">${esc(r.namespace ?? '')}</span></td>
-      <td class="value" onclick="this.classList.toggle('expanded')"><span class="value-text">${val}</span>${score}</td>
+      <td class="value" data-key="${esc(r.key)}" onclick="openValueSheet(this)"><span class="value-text">${val}</span>${score}</td>
       ${isSearch ? '' : `<td class="ns">${esc(r.namespace ?? '')}</td>`}
       <td>${tags}</td>
       <td class="source">${esc(r.source ?? '—')}</td>
@@ -285,6 +301,17 @@ async function loadAllMemory(offset = 0) {
 
 function changePage(dir) {
   loadAllMemory(Math.max(0, currentOffset + dir * PAGE));
+}
+
+function openValueSheet(el) {
+  if (window.innerWidth > 700) return;
+  document.getElementById('valueSheetKey').textContent = el.dataset.key || '';
+  document.getElementById('valueSheetBody').innerHTML = el.innerHTML;
+  document.getElementById('valueSheet').classList.add('open');
+}
+
+function closeValueSheet() {
+  document.getElementById('valueSheet').classList.remove('open');
 }
 
 function toggleAddForm() {
