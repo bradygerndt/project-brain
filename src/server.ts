@@ -7,7 +7,7 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import express, { type Request, type Response } from 'express';
 import { db, getMemoryRowsForHits } from './db.ts';
 import type { MemoryRow, MemorySearchRow, ArtifactRow, AgentRow, LockRow } from './db.ts';
-import { artifactsDir, resolveHost } from './artifacts.ts';
+import { artifactsDir, resolveHost, createArtifact, deleteArtifact } from './artifacts.ts';
 import { registerMemoryTools } from './memory.ts';
 import { registerArtifactTools } from './artifacts.ts';
 import { registerAgentTools } from './agents.ts';
@@ -210,6 +210,38 @@ app.post('/api/memory', (req: Request, res: Response) => {
     }
     setImmediate(async () => { const { vectorUpsert } = await import('./lance.ts'); vectorUpsert(key, namespace, value); });
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+app.delete('/api/memory', (req: Request, res: Response) => {
+  try {
+    const { key, namespace = 'default' } = req.query;
+    if (!key) { res.status(400).json({ error: 'key is required' }); return; }
+    const result = db.prepare('DELETE FROM memory WHERE key = ? AND namespace = ?').run(String(key), String(namespace));
+    setImmediate(async () => { const { vectorDelete } = await import('./lance.ts'); vectorDelete(String(key)); });
+    res.json({ deleted: result.changes > 0 });
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+app.post('/api/artifacts', (req: Request, res: Response) => {
+  try {
+    const { name, content, encoding, mime_type, tags } = req.body;
+    if (!name || !content) { res.status(400).json({ error: 'name and content are required' }); return; }
+    const result = createArtifact({ name, content, encoding, mime_type, tags });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+app.delete('/api/artifacts/:id', (req: Request, res: Response) => {
+  try {
+    const deleted = deleteArtifact(String(req.params.id));
+    res.json({ deleted });
   } catch (err) {
     res.status(500).json({ error: errorMessage(err) });
   }
