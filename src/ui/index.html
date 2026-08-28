@@ -274,13 +274,14 @@ function renderMemoryTable(rows, isSearch = false, searchType = null) {
       ? `<br><span class="score">${searchType === 'hybrid' ? `rrf: ${r._score.toFixed(4)}` : `sim: ${(1 - r._score).toFixed(3)}`}</span>`
       : '';
     const expiry = r.expires_at ? `<br><span class="age">expires ${expiresIn(r.expires_at)}</span>` : '';
+    const usage = r.access_count ? `<br><span class="age">used ${r.access_count}× · last ${timeAgo(r.last_accessed_at)}</span>` : '';
     html += `<tr>
       <td><span class="key">${esc(r.key)}</span><br><span class="ns">${esc(r.namespace ?? '')}</span></td>
       <td class="value" data-key="${esc(r.key)}" onclick="openValueSheet(this)"><span class="value-text">${val}</span>${score}</td>
       ${isSearch ? '' : `<td class="ns">${esc(r.namespace ?? '')}</td>`}
       <td>${tags}</td>
       <td class="source">${esc(r.source ?? '—')}</td>
-      <td class="age">${timeAgo(r.updated_at)}${expiry}</td>
+      <td class="age">${timeAgo(r.updated_at)}${expiry}${usage}</td>
       <td><button class="btn-ghost" onclick="deleteMemory('${esc(escJs(r.key))}','${esc(escJs(r.namespace ?? 'default'))}')">Delete</button></td>
     </tr>`;
   }

@@ -54,6 +54,11 @@ flowchart TD
   (tags, source, timestamps) — LanceDB only stores `key`/`namespace`/`vector`/`text`, not the
   full record. This is the only path that can find conceptually related facts with no keyword
   overlap at all, at the cost of an extra embedding call and a second lookup per result.
+- **All three above also bump `access_count`/`last_accessed_at`** on every row they return, via
+  a synchronous `UPDATE` (`recordAccess` in `src/db.ts`) — unlike the vector index writes, this
+  isn't deferred with `setImmediate`, since `node:sqlite` is fully synchronous and a single
+  indexed row update costs nothing extra to do inline. `memory_list` does **not** bump it — it's
+  a browsing operation, not a use of a specific fact.
 
 See [`src/memory.ts`](../src/memory.ts) and [`src/lance.ts`](../src/lance.ts) for the actual
 implementation.

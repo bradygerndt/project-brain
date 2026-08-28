@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { db, getMemoryRowsForHits, purgeExpiredMemory } from './db.ts';
+import { db, getMemoryRowsForHits, purgeExpiredMemory, recordAccess } from './db.ts';
 import type { MemoryRow, MemorySearchRow } from './db.ts';
 import { vectorUpsert, vectorDelete, vectorSearch, vectorsForNamespace } from './lance.ts';
 
@@ -56,14 +56,16 @@ export async function hybridSearch({ query, namespace, prefix, limit = 10 }: Hyb
     });
 
   const rows = getMemoryRowsForHits(ranked);
-  return ranked.map((r, i) => {
+  const results = ranked.map((r, i) => {
     const row = rows[i];
     // Defensive: vector hits should already be archived-clean (consolidation
     // vector-deletes archived originals), but don't rely solely on that —
     // vectorDelete is fire-and-forget and can silently fail.
     if (!row || row.archived) return null;
     return { ...row, tags: JSON.parse(row.tags), _score: r._score };
-  }).filter(Boolean);
+  }).filter((r): r is NonNullable<typeof r> => r !== null);
+  recordAccess(results.map(r => ({ key: r.key, namespace: r.namespace })));
+  return results;
 }
 
 export interface FindClustersOptions {
@@ -117,7 +119,7 @@ export async function findClusters({ namespace = 'default', similarity_threshold
       const keys = group.map(i => ({ key: vectors[i].key, namespace }));
       const rows = (getMemoryRowsForHits(keys).filter(Boolean) as MemoryRow[])
         .sort((a, b) => b.updated_at - a.updated_at)
-        .map(r => ({ key: r.key, value: r.value, tags: JSON.parse(r.tags) as string[], updated_at: r.updated_at }));
+        .map(r => ({ key: r.key, value: r.value, tags: JSON.parse(r.tags) as string[], updated_at: r.updated_at, access_count: r.access_count, last_accessed_at: r.last_accessed_at }));
       return { keys: rows.map(r => r.key), entries: rows };
     });
 
@@ -185,6 +187,7 @@ export function registerMemoryTools(server: McpServer) {
       // entry should still be directly fetchable by key.
       const row = db.prepare('SELECT * FROM memory WHERE key = ? AND namespace = ?').get(key, namespace) as MemoryRow | undefined;
       if (!row) return { content: [{ type: 'text' as const, text: 'null' }] };
+      recordAccess([{ key, namespace }]);
       return { content: [{ type: 'text' as const, text: JSON.stringify({ ...row, tags: JSON.parse(row.tags) }) }] };
     }
   );
@@ -201,7 +204,7 @@ export function registerMemoryTools(server: McpServer) {
       purgeExpired();
       const params: (string | number)[] = [query];
       let sql = `
-        SELECT m.key, m.value, m.tags, m.namespace, m.source, m.updated_at,
+        SELECT m.key, m.value, m.tags, m.namespace, m.source, m.updated_at, m.access_count, m.last_accessed_at,
                snippet(memory_fts, 1, '[', ']', '...', 20) AS snippet
         FROM memory m
         JOIN memory_fts f ON m.rowid = f.rowid
@@ -213,6 +216,7 @@ export function registerMemoryTools(server: McpServer) {
 
       const rows = db.prepare(sql).all(...params) as unknown as MemorySearchRow[];
       const results = rows.map(r => ({ ...r, tags: JSON.parse(r.tags) }));
+      recordAccess(results.map(r => ({ key: r.key, namespace: r.namespace })));
       return { content: [{ type: 'text' as const, text: JSON.stringify(results) }] };
     }
   );
@@ -234,7 +238,8 @@ export function registerMemoryTools(server: McpServer) {
         const row = rows[i];
         if (!row || row.archived) return null;
         return { ...row, tags: JSON.parse(row.tags), _score: h._distance };
-      }).filter(Boolean);
+      }).filter((r): r is NonNullable<typeof r> => r !== null);
+      recordAccess(results.map(r => ({ key: r.key, namespace: r.namespace })));
       return { content: [{ type: 'text' as const, text: JSON.stringify(results) }] };
     }
   );

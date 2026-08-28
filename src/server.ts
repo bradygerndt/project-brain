@@ -5,7 +5,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import express, { type Request, type Response } from 'express';
-import { db, getMemoryRowsForHits } from './db.ts';
+import { db, getMemoryRowsForHits, recordAccess } from './db.ts';
 import type { MemoryRow, MemorySearchRow, ArtifactRow, AgentRow, LockRow } from './db.ts';
 import { artifactsDir, resolveHost, createArtifact, deleteArtifact } from './artifacts.ts';
 import { registerMemoryTools, purgeExpired, hybridSearch } from './memory.ts';
@@ -35,6 +35,8 @@ To extract facts from a large blob of raw text (a transcript, notes, a document)
 For search: memory_search (keyword/full-text) is fast and exact — use it when you know the term. memory_search_semantic (vector similarity) finds conceptually related entries even without exact keyword overlap — use it when you're unsure of the exact phrasing, or want to check for anything related before writing a new fact. memory_search_hybrid fuses both (Reciprocal Rank Fusion) — a good default when you're not sure which style fits.
 
 To consolidate near-duplicate memories in a namespace once it's accumulated a lot of facts: call memory_find_clusters, which groups entries by embedding similarity and returns the full text of each cluster — it does not merge anything itself. Read each cluster's entries, write one merged fact yourself via memory_set on whichever key you want to keep, then call memory_archive on the others in that cluster. Archived entries stay fetchable by exact key via memory_get, just excluded from list/search results.
+
+memory_get and every search tool return access_count and last_accessed_at on each entry, bumped automatically whenever that entry is fetched or returned by a search (not by memory_list, which is browsing rather than use). That's a more meaningful staleness signal than updated_at when deciding which cluster member to keep during consolidation — a fact nobody's looked at in months is a better archive candidate than one that's still being read regularly, even if it was edited more recently.
 
 To summarize what's stored (a whole namespace, or a narrower slice via a prefix or tag): there's no dedicated tool for this either — gather the entries yourself with memory_list/memory_search (paginate with offset if there's more than one page), skipping any entry already tagged "summary" so you don't summarize a previous summary, write the summary yourself, then store it back with memory_set under a conventional key so it's easy to find and update later — "<namespace>._summary" for a whole-namespace summary, or a narrower key like "decision._summary" when you summarized just one prefix — tagged ["summary"]. Reuse that same key next time so it updates in place instead of accumulating stale summaries.
 
@@ -136,7 +138,7 @@ app.get('/api/memory', (req: Request, res: Response) => {
 
     if (type === 'keyword') {
       const params: (string | number)[] = [String(q)];
-      let sql = `SELECT m.key, m.value, m.tags, m.namespace, m.source, m.updated_at,
+      let sql = `SELECT m.key, m.value, m.tags, m.namespace, m.source, m.updated_at, m.access_count, m.last_accessed_at,
                         snippet(memory_fts, 1, '[', ']', '...', 20) AS snippet
                  FROM memory m JOIN memory_fts f ON m.rowid = f.rowid
                  WHERE memory_fts MATCH ? AND m.archived = 0`;
@@ -144,7 +146,9 @@ app.get('/api/memory', (req: Request, res: Response) => {
       if (prefix) { sql += ' AND m.key LIKE ?'; params.push(`${String(prefix)}%`); }
       sql += ' LIMIT ?'; params.push(lim);
       const rows = db.prepare(sql).all(...params) as unknown as MemorySearchRow[];
-      res.json(rows.map(r => ({ ...r, tags: JSON.parse(r.tags) })));
+      const results = rows.map(r => ({ ...r, tags: JSON.parse(r.tags) }));
+      recordAccess(results.map(r => ({ key: r.key, namespace: r.namespace })));
+      res.json(results);
     } else {
       // semantic search is async — handled via a dedicated endpoint
       res.status(400).json({ error: 'Use /api/memory/semantic for semantic search' });
@@ -168,7 +172,8 @@ app.get('/api/memory/semantic', async (req: Request, res: Response) => {
       const row = rows[i];
       if (!row || row.archived) return null;
       return { ...row, tags: JSON.parse(row.tags), _score: h._distance };
-    }).filter(Boolean);
+    }).filter((r): r is NonNullable<typeof r> => r !== null);
+    recordAccess(results.map(r => ({ key: r.key, namespace: r.namespace })));
     res.json(results);
   } catch (err) {
     res.status(500).json({ error: errorMessage(err) });
