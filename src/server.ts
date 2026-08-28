@@ -5,10 +5,10 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import express, { type Request, type Response } from 'express';
-import { db, getMemoryRowsForHits } from './db.ts';
+import { db, getMemoryRowsForHits, recordAccess } from './db.ts';
 import type { MemoryRow, MemorySearchRow, ArtifactRow, AgentRow, LockRow } from './db.ts';
 import { artifactsDir, resolveHost, createArtifact, deleteArtifact } from './artifacts.ts';
-import { registerMemoryTools } from './memory.ts';
+import { registerMemoryTools, purgeExpired, hybridSearch } from './memory.ts';
 import { registerArtifactTools } from './artifacts.ts';
 import { registerAgentTools } from './agents.ts';
 
@@ -26,11 +26,27 @@ function errorMessage(err: unknown): string {
 // descriptions already carry.
 const SERVER_INSTRUCTIONS = `project-brain is a persistent memory service for this project or user, shared across sessions and agents.
 
-Facts are stored under dot-namespaced keys (e.g. "user.role", "project.deadline", "decision.api-style") — reuse an existing key to update a fact rather than creating a near-duplicate under a slightly different name. Use memory_set for a single fact you've already identified; use memory_extract for a large blob of raw text (a transcript, notes, a document) you want decomposed into multiple facts automatically — it makes its own call to Claude Haiku server-side and requires ANTHROPIC_API_KEY, so fall back to memory_set if it's unavailable.
+Facts are stored under dot-namespaced keys (e.g. "user.role", "project.deadline", "decision.api-style") — reuse an existing key to update a fact rather than creating a near-duplicate under a slightly different name. Before writing a genuinely new key (not updating an existing one), a quick memory_search_hybrid for the topic is worth it too — it can catch a fact that already exists under a *different* key and might contradict what you're about to write, which the exact-match key check above won't. Use memory_set for a single fact you've already identified.
 
-For search: memory_search (keyword/full-text) is fast and exact — use it when you know the term. memory_search_semantic (vector similarity) finds conceptually related entries even without exact keyword overlap — use it when you're unsure of the exact phrasing, or want to check for anything related before writing a new fact.
+If how much to trust a fact later matters, tag it accordingly — e.g. "verified" for something the user explicitly confirmed vs "inferred" for something you concluded yourself. Not required for every fact, just worth doing when the distinction is meaningful.
+
+To extract facts from a large blob of raw text (a transcript, notes, a document): there's no dedicated tool for this — read the text yourself, identify the distinct stable facts worth keeping, and call memory_set once per fact. You already have an LLM in the loop reading this, so there's no need to hand the text to another model.
+
+For search: memory_search (keyword/full-text) is fast and exact — use it when you know the term. memory_search_semantic (vector similarity) finds conceptually related entries even without exact keyword overlap — use it when you're unsure of the exact phrasing, or want to check for anything related before writing a new fact. memory_search_hybrid fuses both (Reciprocal Rank Fusion) — a good default when you're not sure which style fits.
+
+To consolidate near-duplicate memories in a namespace once it's accumulated a lot of facts: call memory_find_clusters, which groups entries by embedding similarity and returns the full text of each cluster — it does not merge anything itself. Read each cluster's entries, write one merged fact yourself via memory_set on whichever key you want to keep, then call memory_archive on the others in that cluster. Archived entries stay fetchable by exact key via memory_get, just excluded from list/search results.
+
+memory_get and every search tool return access_count and last_accessed_at on each entry, bumped automatically whenever that entry is fetched or returned by a search (not by memory_list, which is browsing rather than use). That's a more meaningful staleness signal than updated_at when deciding which cluster member to keep during consolidation — a fact nobody's looked at in months is a better archive candidate than one that's still being read regularly, even if it was edited more recently.
+
+To summarize what's stored (a whole namespace, or a narrower slice via a prefix or tag): there's no dedicated tool for this either — gather the entries yourself with memory_list/memory_search (paginate with offset if there's more than one page), skipping any entry already tagged "summary" so you don't summarize a previous summary, write the summary yourself, then store it back with memory_set under a conventional key so it's easy to find and update later — "<namespace>._summary" for a whole-namespace summary, or a narrower key like "decision._summary" when you summarized just one prefix — tagged ["summary"]. Reuse that same key next time so it updates in place instead of accumulating stale summaries.
+
+If you're a client that supports Skills (e.g. Claude Code) and don't already have a local skill for this server in the current project, consider saving the guidance above as one (e.g. .claude/skills/project-brain-memory/SKILL.md) so future sessions in this project don't need to rediscover it from these instructions every time.
 
 namespace (default: "default") partitions memories — use a distinct namespace per project or user if this instance is shared across contexts that shouldn't mix.
+
+There's no fixed vocabulary for key prefixes — use whatever's clearest for the project. One loose starting point, if you don't already have a convention: "user.*" for things about the person, "project.*" for project-level facts, "decision.*" for choices made and why. Take it as a suggestion, not a schema — adapt or ignore as fits.
+
+For short-lived reasoning state that shouldn't outlive the task it's for (e.g. "currently investigating X"), consider a dedicated namespace like "scratch" combined with ttl_seconds on memory_set, so it expires on its own instead of needing manual cleanup.
 
 Agent presence (agent_ping/agent_list) and resource locks (lock_acquire/lock_release) are opt-in — nothing is tracked automatically just by connecting. Call agent_ping if you want other agents to see you're active.`;
 
@@ -115,20 +131,24 @@ app.get('/health', (_req: Request, res: Response) => {
 
 app.get('/api/memory', (req: Request, res: Response) => {
   try {
-    const { q, type = 'keyword', ns, limit = '20' } = req.query;
+    const { q, type = 'keyword', ns, prefix, limit = '20' } = req.query;
     if (!q) { res.json([]); return; }
     const lim = Math.min(parseInt(String(limit), 10) || 20, 100);
+    purgeExpired();
 
     if (type === 'keyword') {
       const params: (string | number)[] = [String(q)];
-      let sql = `SELECT m.key, m.value, m.tags, m.namespace, m.source, m.updated_at,
+      let sql = `SELECT m.key, m.value, m.tags, m.namespace, m.source, m.updated_at, m.access_count, m.last_accessed_at,
                         snippet(memory_fts, 1, '[', ']', '...', 20) AS snippet
                  FROM memory m JOIN memory_fts f ON m.rowid = f.rowid
-                 WHERE memory_fts MATCH ?`;
+                 WHERE memory_fts MATCH ? AND m.archived = 0`;
       if (ns) { sql += ' AND m.namespace = ?'; params.push(String(ns)); }
+      if (prefix) { sql += ' AND m.key LIKE ?'; params.push(`${String(prefix)}%`); }
       sql += ' LIMIT ?'; params.push(lim);
       const rows = db.prepare(sql).all(...params) as unknown as MemorySearchRow[];
-      res.json(rows.map(r => ({ ...r, tags: JSON.parse(r.tags) })));
+      const results = rows.map(r => ({ ...r, tags: JSON.parse(r.tags) }));
+      recordAccess(results.map(r => ({ key: r.key, namespace: r.namespace })));
+      res.json(results);
     } else {
       // semantic search is async — handled via a dedicated endpoint
       res.status(400).json({ error: 'Use /api/memory/semantic for semantic search' });
@@ -140,17 +160,32 @@ app.get('/api/memory', (req: Request, res: Response) => {
 
 app.get('/api/memory/semantic', async (req: Request, res: Response) => {
   try {
-    const { q, ns, limit = '10' } = req.query;
+    const { q, ns, prefix, limit = '10' } = req.query;
     if (!q) { res.json([]); return; }
     const lim = Math.min(parseInt(String(limit), 10) || 10, 50);
+    purgeExpired();
     const { vectorSearch } = await import('./lance.ts');
-    const hits = await vectorSearch(String(q), ns ? String(ns) : undefined, lim);
+    let hits = await vectorSearch(String(q), ns ? String(ns) : undefined, prefix ? Math.min(lim * 4, 100) : lim);
+    if (prefix) hits = hits.filter(h => h.key.startsWith(String(prefix))).slice(0, lim);
     const rows = getMemoryRowsForHits(hits);
     const results = hits.map((h, i) => {
       const row = rows[i];
-      if (!row) return null;
+      if (!row || row.archived) return null;
       return { ...row, tags: JSON.parse(row.tags), _score: h._distance };
-    }).filter(Boolean);
+    }).filter((r): r is NonNullable<typeof r> => r !== null);
+    recordAccess(results.map(r => ({ key: r.key, namespace: r.namespace })));
+    res.json(results);
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+app.get('/api/memory/hybrid', async (req: Request, res: Response) => {
+  try {
+    const { q, ns, prefix, limit = '10' } = req.query;
+    if (!q) { res.json([]); return; }
+    const lim = Math.min(parseInt(String(limit), 10) || 10, 50);
+    const results = await hybridSearch({ query: String(q), namespace: ns ? String(ns) : undefined, prefix: prefix ? String(prefix) : undefined, limit: lim });
     res.json(results);
   } catch (err) {
     res.status(500).json({ error: errorMessage(err) });
@@ -159,11 +194,13 @@ app.get('/api/memory/semantic', async (req: Request, res: Response) => {
 
 app.get('/api/memory/list', (req: Request, res: Response) => {
   try {
-    const { ns, tag, limit = '50', offset = '0' } = req.query;
-    let sql = 'SELECT * FROM memory WHERE 1=1';
+    const { ns, tag, prefix, limit = '50', offset = '0' } = req.query;
+    purgeExpired();
+    let sql = 'SELECT * FROM memory WHERE archived = 0';
     const params: (string | number)[] = [];
     if (ns) { sql += ' AND namespace = ?'; params.push(String(ns)); }
     if (tag) { sql += ' AND tags LIKE ?'; params.push(`%"${String(tag)}"%`); }
+    if (prefix) { sql += ' AND key LIKE ?'; params.push(`${String(prefix)}%`); }
     sql += ' ORDER BY updated_at DESC LIMIT ? OFFSET ?';
     params.push(Math.min(parseInt(String(limit), 10) || 50, 200), parseInt(String(offset), 10) || 0);
     const rows = db.prepare(sql).all(...params) as unknown as MemoryRow[];
@@ -196,17 +233,18 @@ app.get('/api/artifacts', (req: Request, res: Response) => {
 
 app.post('/api/memory', (req: Request, res: Response) => {
   try {
-    const { key, value, tags = [], namespace = 'default', source } = req.body;
+    const { key, value, tags = [], namespace = 'default', source, ttl_seconds } = req.body;
     if (!key || !value) { res.status(400).json({ error: 'key and value are required' }); return; }
     const now = Date.now();
     const tagsJson = JSON.stringify(tags);
+    const expiresAt = ttl_seconds ? now + Number(ttl_seconds) * 1000 : null;
     const existing = db.prepare('SELECT created_at FROM memory WHERE key = ? AND namespace = ?').get(key, namespace);
     if (existing) {
-      db.prepare('UPDATE memory SET value=?, tags=?, source=?, updated_at=? WHERE key=? AND namespace=?')
-        .run(value, tagsJson, source ?? 'manual', now, key, namespace);
+      db.prepare('UPDATE memory SET value=?, tags=?, source=?, expires_at=?, updated_at=? WHERE key=? AND namespace=?')
+        .run(value, tagsJson, source ?? 'manual', expiresAt, now, key, namespace);
     } else {
-      db.prepare('INSERT INTO memory(key, value, tags, namespace, source, created_at, updated_at) VALUES(?,?,?,?,?,?,?)')
-        .run(key, value, tagsJson, namespace, source ?? 'manual', now, now);
+      db.prepare('INSERT INTO memory(key, value, tags, namespace, source, expires_at, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)')
+        .run(key, value, tagsJson, namespace, source ?? 'manual', expiresAt, now, now);
     }
     setImmediate(async () => { const { vectorUpsert } = await import('./lance.ts'); vectorUpsert(key, namespace, value); });
     res.json({ ok: true });

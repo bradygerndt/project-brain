@@ -23,7 +23,6 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/bradygerndt/project-brain/cli/internal/bridge"
-	"github.com/bradygerndt/project-brain/cli/internal/config"
 	"github.com/bradygerndt/project-brain/cli/internal/desktop"
 	"github.com/bradygerndt/project-brain/cli/internal/docker"
 	"github.com/bradygerndt/project-brain/cli/internal/health"
@@ -245,7 +244,6 @@ func cmdStart(args []string) error {
 					continue
 				}
 			}
-			key, _ := config.AnthropicKey()
 			if err := docker.Create(docker.CreateOpts{
 				ContainerName: container,
 				Image:         inst.Image,
@@ -254,7 +252,6 @@ func cmdStart(args []string) error {
 				DataVolume:    state.DataVolume(name),
 				CacheVolume:   state.CacheVolume,
 				InstanceName:  name,
-				AnthropicKey:  key,
 				ArtifactsHost: resolveArtifactsHost(inst.ArtifactsHost),
 			}); err != nil {
 				ui.Err("%s: %s", name, err.Error())
@@ -911,7 +908,6 @@ func cmdUpdate(args []string) error {
 			ui.Err("%s: %s", name, err.Error())
 			continue
 		}
-		key, _ := config.AnthropicKey()
 		if err := docker.Create(docker.CreateOpts{
 			ContainerName: container,
 			Image:         inst.Image,
@@ -920,7 +916,6 @@ func cmdUpdate(args []string) error {
 			DataVolume:    state.DataVolume(name),
 			CacheVolume:   state.CacheVolume,
 			InstanceName:  name,
-			AnthropicKey:  key,
 			ArtifactsHost: resolveArtifactsHost(inst.ArtifactsHost),
 		}); err != nil {
 			ui.Err("%s: %s", name, err.Error())

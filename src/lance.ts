@@ -13,6 +13,14 @@ export interface VectorHit {
   _distance: number;
 }
 
+export interface NamespaceVectorRow {
+  key: string;
+  namespace: string;
+  vector: number[];
+  text: string;
+  updated_at: number;
+}
+
 const vectorsDir = resolve(dataPath, 'vectors');
 mkdirSync(vectorsDir, { recursive: true });
 
@@ -82,6 +90,20 @@ export async function vectorDelete(key: string): Promise<void> {
     await tbl.delete(`key = '${key.replace(/'/g, "''")}'`);
   } catch (err) {
     console.error('[lance] delete failed:', err instanceof Error ? err.message : err);
+  }
+}
+
+// Filter-only scan (no query vector) — used by findClusters (memory.ts) to
+// pull every embedding in a namespace for clustering.
+export async function vectorsForNamespace(namespace: string): Promise<NamespaceVectorRow[]> {
+  try {
+    const tbl = await getTable();
+    const rows = await tbl.query().where(`namespace = '${namespace.replace(/'/g, "''")}'`).toArray() as unknown as (Omit<NamespaceVectorRow, 'vector'> & { vector: Iterable<number> })[];
+    // .query() (unlike .search()) returns `vector` as an Arrow Vector, not a plain array.
+    return rows.map(r => ({ ...r, vector: Array.from(r.vector) }));
+  } catch (err) {
+    console.error('[lance] namespace scan failed:', err instanceof Error ? err.message : err);
+    return [];
   }
 }
 

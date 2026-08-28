@@ -105,20 +105,6 @@ else
   ok "$BIN_DIR is already in PATH"
 fi
 
-# ── ~/.config/brain/.env ─────────────────────────────────────────────────────
-# No local checkout exists anymore, so this can't live next to a compose
-# file — brain itself loads it from here before creating any container.
-CONFIG_DIR="${BRAIN_CONFIG_DIR:-$HOME/.config/brain}"
-ENV_FILE="$CONFIG_DIR/.env"
-if [[ ! -f "$ENV_FILE" ]]; then
-  mkdir -p "$CONFIG_DIR"
-  printf 'ANTHROPIC_API_KEY=\n' > "$ENV_FILE"
-  warn ".env created — edit $ENV_FILE and add your ANTHROPIC_API_KEY"
-  warn "(only needed for the memory_extract tool)"
-else
-  ok ".env exists"
-fi
-
 # ── Docker ───────────────────────────────────────────────────────────────────
 if ! command -v docker &>/dev/null; then
   warn "Docker not found"

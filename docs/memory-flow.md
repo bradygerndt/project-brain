@@ -9,18 +9,16 @@ That difference matters for what you can expect right after a write, so it's cal
 ```mermaid
 flowchart TD
     A["memory_set(key, value, tags, namespace)"] --> B["SQLite: INSERT/UPDATE memory table"]
-    C["memory_extract(raw text, context)"] --> D["extractFacts() -> Claude Haiku API<br/>(requires ANTHROPIC_API_KEY)"]
-    D -->|"one or more {key, value, tags}"| B
 
     B -->|"AFTER INSERT/UPDATE trigger<br/>synchronous, same transaction"| E["memory_fts (FTS5) index updated"]
     B -->|"setImmediate — async, not awaited"| F["embed(text) via transformers.js<br/>(Xenova/all-MiniLM-L6-v2)"]
     F --> G["LanceDB: mergeInsert into memory_vectors"]
 ```
 
-- **`memory_set`** is the direct path — one call, one fact, caller already knows the key/value.
-- **`memory_extract`** fans into the same write path, just with an extra step first: raw text
-  goes to Claude Haiku (`src/extract.ts`), which returns a JSON array of facts, each one then
-  written exactly like a `memory_set` call.
+- **`memory_set`** is the only write path — one call, one fact. There's no server-side
+  extraction tool: to turn a blob of raw text into facts, the calling agent reads it and calls
+  `memory_set` once per fact itself (it already has an LLM in the loop, so there's no need to
+  hand the text to another model server-side).
 - **The FTS index update is synchronous** — part of the same SQLite write, via triggers in
   `src/db.ts` (`memory_ai`/`memory_au`/`memory_ad`). A `memory_search` right after `memory_set`
   returns will find the new entry.
@@ -56,6 +54,11 @@ flowchart TD
   (tags, source, timestamps) — LanceDB only stores `key`/`namespace`/`vector`/`text`, not the
   full record. This is the only path that can find conceptually related facts with no keyword
   overlap at all, at the cost of an extra embedding call and a second lookup per result.
+- **All three above also bump `access_count`/`last_accessed_at`** on every row they return, via
+  a synchronous `UPDATE` (`recordAccess` in `src/db.ts`) — unlike the vector index writes, this
+  isn't deferred with `setImmediate`, since `node:sqlite` is fully synchronous and a single
+  indexed row update costs nothing extra to do inline. `memory_list` does **not** bump it — it's
+  a browsing operation, not a use of a specific fact.
 
-See [`src/memory.ts`](../src/memory.ts), [`src/lance.ts`](../src/lance.ts), and
-[`src/extract.ts`](../src/extract.ts) for the actual implementation.
+See [`src/memory.ts`](../src/memory.ts) and [`src/lance.ts`](../src/lance.ts) for the actual
+implementation.
