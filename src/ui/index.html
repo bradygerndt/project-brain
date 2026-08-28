@@ -146,11 +146,14 @@
       <select id="searchType">
         <option value="keyword">Keyword</option>
         <option value="semantic">Semantic</option>
+        <option value="hybrid">Hybrid</option>
       </select>
       <input id="nsFilter" type="text" placeholder="namespace" style="max-width:140px">
+      <input id="prefixFilter" type="text" placeholder="key prefix" style="max-width:140px">
       <button onclick="searchMemory()">Search</button>
       <button class="btn-ghost" onclick="loadAllMemory()">Browse all</button>
       <button class="btn-ghost" onclick="toggleAddForm()">+ Add</button>
+      <button class="btn-ghost" onclick="consolidateMemory()">Consolidate</button>
     </div>
 
     <div class="add-form" id="addForm">
@@ -162,6 +165,8 @@
       <input id="newNs" placeholder="default">
       <label>Tags (comma-separated)</label>
       <input id="newTags" placeholder="tag1, tag2">
+      <label>TTL (seconds, optional)</label>
+      <input id="newTtl" type="number" placeholder="e.g. 3600">
       <div class="actions">
         <button class="btn" onclick="addMemory()">Save</button>
         <button class="btn btn-ghost" onclick="toggleAddForm()">Cancel</button>
@@ -254,7 +259,7 @@ function timeAgo(ms) {
   return `${Math.floor(s/86400)}d ago`;
 }
 
-function renderMemoryTable(rows, isSearch = false) {
+function renderMemoryTable(rows, isSearch = false, searchType = null) {
   if (!rows.length) {
     document.getElementById('memResults').innerHTML = '<div class="empty">No results</div>';
     return;
@@ -266,14 +271,17 @@ function renderMemoryTable(rows, isSearch = false) {
     const val = r.snippet
       ? r.snippet.replace(/\[/g,'<em>').replace(/\]/g,'</em>')
       : esc(r.value ?? '');
-    const score = r._score != null ? `<br><span class="score">sim: ${(1 - r._score).toFixed(3)}</span>` : '';
+    const score = r._score != null
+      ? `<br><span class="score">${searchType === 'hybrid' ? `rrf: ${r._score.toFixed(4)}` : `sim: ${(1 - r._score).toFixed(3)}`}</span>`
+      : '';
+    const expiry = r.expires_at ? `<br><span class="age">expires ${expiresIn(r.expires_at)}</span>` : '';
     html += `<tr>
       <td><span class="key">${esc(r.key)}</span><br><span class="ns">${esc(r.namespace ?? '')}</span></td>
       <td class="value" data-key="${esc(r.key)}" onclick="openValueSheet(this)"><span class="value-text">${val}</span>${score}</td>
       ${isSearch ? '' : `<td class="ns">${esc(r.namespace ?? '')}</td>`}
       <td>${tags}</td>
       <td class="source">${esc(r.source ?? '—')}</td>
-      <td class="age">${timeAgo(r.updated_at)}</td>
+      <td class="age">${timeAgo(r.updated_at)}${expiry}</td>
       <td><button class="btn-ghost" onclick="deleteMemory('${esc(escJs(r.key))}','${esc(escJs(r.namespace ?? 'default'))}')">Delete</button></td>
     </tr>`;
   }
@@ -296,17 +304,18 @@ async function searchMemory() {
   const q = document.getElementById('memSearch').value.trim();
   const type = document.getElementById('searchType').value;
   const ns = document.getElementById('nsFilter').value.trim();
+  const prefix = document.getElementById('prefixFilter').value.trim();
   if (!q) { loadAllMemory(); return; }
   showError('mem', null);
   document.getElementById('memResults').innerHTML = '<div class="loading">Searching…</div>';
   document.getElementById('memPagination').style.display = 'none';
-  lastSearch = { q, type, ns };
+  lastSearch = { q, type, ns, prefix };
   try {
-    const endpoint = type === 'semantic' ? '/api/memory/semantic' : '/api/memory';
-    const url = `${BASE}${endpoint}?q=${encodeURIComponent(q)}${ns ? '&ns='+encodeURIComponent(ns) : ''}&limit=50`;
+    const endpoint = type === 'semantic' ? '/api/memory/semantic' : type === 'hybrid' ? '/api/memory/hybrid' : '/api/memory';
+    const url = `${BASE}${endpoint}?q=${encodeURIComponent(q)}${ns ? '&ns='+encodeURIComponent(ns) : ''}${prefix ? '&prefix='+encodeURIComponent(prefix) : ''}&limit=50`;
     const data = await fetch(url).then(r => r.json());
     if (data.error) throw new Error(data.error);
-    renderMemoryTable(data, true);
+    renderMemoryTable(data, true, type);
   } catch (e) { showError('mem', e.message); }
 }
 
@@ -314,10 +323,11 @@ async function loadAllMemory(offset = 0) {
   currentOffset = offset;
   lastSearch = null;
   const ns = document.getElementById('nsFilter').value.trim();
+  const prefix = document.getElementById('prefixFilter').value.trim();
   showError('mem', null);
   document.getElementById('memResults').innerHTML = '<div class="loading">Loading…</div>';
   try {
-    const url = `${BASE}/api/memory/list?limit=${PAGE}&offset=${offset}${ns ? '&ns='+encodeURIComponent(ns) : ''}`;
+    const url = `${BASE}/api/memory/list?limit=${PAGE}&offset=${offset}${ns ? '&ns='+encodeURIComponent(ns) : ''}${prefix ? '&prefix='+encodeURIComponent(prefix) : ''}`;
     const data = await fetch(url).then(r => r.json());
     if (data.error) throw new Error(data.error);
     renderMemoryTable(data);
@@ -344,6 +354,29 @@ function closeValueSheet() {
   document.getElementById('valueSheet').classList.remove('open');
 }
 
+async function consolidateMemory() {
+  const ns = document.getElementById('nsFilter').value.trim() || 'default';
+  if (!confirm(`Consolidate memories in namespace "${ns}"? This will merge near-duplicate entries.`)) return;
+  showError('mem', null);
+  const prevHtml = document.getElementById('memResults').innerHTML;
+  document.getElementById('memResults').innerHTML = '<div class="loading">Consolidating… (uses Claude Haiku, may take a few seconds)</div>';
+  try {
+    const res = await fetch(`${BASE}/api/memory/consolidate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ namespace: ns })
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error);
+    if (lastSearch) await searchMemory(); else await loadAllMemory(currentOffset);
+    showError('mem', null);
+    alert(`Merged ${d.entries_archived} entries into ${d.clusters_found} consolidated fact(s).`);
+  } catch (e) {
+    document.getElementById('memResults').innerHTML = prevHtml;
+    showError('mem', e.message);
+  }
+}
+
 function toggleAddForm() {
   document.getElementById('addForm').classList.toggle('open');
 }
@@ -353,12 +386,14 @@ async function addMemory() {
   const value = document.getElementById('newValue').value.trim();
   const namespace = document.getElementById('newNs').value.trim() || 'default';
   const tags = document.getElementById('newTags').value.split(',').map(t=>t.trim()).filter(Boolean);
+  const ttlRaw = document.getElementById('newTtl').value.trim();
+  const ttl_seconds = ttlRaw ? parseInt(ttlRaw, 10) : undefined;
   if (!key || !value) { showError('mem', 'Key and value are required'); return; }
   try {
     const res = await fetch(`${BASE}/api/memory`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key, value, namespace, tags, source: 'manual' })
+      body: JSON.stringify({ key, value, namespace, tags, source: 'manual', ttl_seconds })
     });
     if (!res.ok) { const d = await res.json(); throw new Error(d.error); }
     toggleAddForm();

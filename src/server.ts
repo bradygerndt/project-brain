@@ -8,7 +8,7 @@ import express, { type Request, type Response } from 'express';
 import { db, getMemoryRowsForHits } from './db.ts';
 import type { MemoryRow, MemorySearchRow, ArtifactRow, AgentRow, LockRow } from './db.ts';
 import { artifactsDir, resolveHost, createArtifact, deleteArtifact } from './artifacts.ts';
-import { registerMemoryTools } from './memory.ts';
+import { registerMemoryTools, purgeExpired, hybridSearch, consolidateNamespace } from './memory.ts';
 import { registerArtifactTools } from './artifacts.ts';
 import { registerAgentTools } from './agents.ts';
 
@@ -115,17 +115,19 @@ app.get('/health', (_req: Request, res: Response) => {
 
 app.get('/api/memory', (req: Request, res: Response) => {
   try {
-    const { q, type = 'keyword', ns, limit = '20' } = req.query;
+    const { q, type = 'keyword', ns, prefix, limit = '20' } = req.query;
     if (!q) { res.json([]); return; }
     const lim = Math.min(parseInt(String(limit), 10) || 20, 100);
+    purgeExpired();
 
     if (type === 'keyword') {
       const params: (string | number)[] = [String(q)];
       let sql = `SELECT m.key, m.value, m.tags, m.namespace, m.source, m.updated_at,
                         snippet(memory_fts, 1, '[', ']', '...', 20) AS snippet
                  FROM memory m JOIN memory_fts f ON m.rowid = f.rowid
-                 WHERE memory_fts MATCH ?`;
+                 WHERE memory_fts MATCH ? AND m.archived = 0`;
       if (ns) { sql += ' AND m.namespace = ?'; params.push(String(ns)); }
+      if (prefix) { sql += ' AND m.key LIKE ?'; params.push(`${String(prefix)}%`); }
       sql += ' LIMIT ?'; params.push(lim);
       const rows = db.prepare(sql).all(...params) as unknown as MemorySearchRow[];
       res.json(rows.map(r => ({ ...r, tags: JSON.parse(r.tags) })));
@@ -140,15 +142,17 @@ app.get('/api/memory', (req: Request, res: Response) => {
 
 app.get('/api/memory/semantic', async (req: Request, res: Response) => {
   try {
-    const { q, ns, limit = '10' } = req.query;
+    const { q, ns, prefix, limit = '10' } = req.query;
     if (!q) { res.json([]); return; }
     const lim = Math.min(parseInt(String(limit), 10) || 10, 50);
+    purgeExpired();
     const { vectorSearch } = await import('./lance.ts');
-    const hits = await vectorSearch(String(q), ns ? String(ns) : undefined, lim);
+    let hits = await vectorSearch(String(q), ns ? String(ns) : undefined, prefix ? Math.min(lim * 4, 100) : lim);
+    if (prefix) hits = hits.filter(h => h.key.startsWith(String(prefix))).slice(0, lim);
     const rows = getMemoryRowsForHits(hits);
     const results = hits.map((h, i) => {
       const row = rows[i];
-      if (!row) return null;
+      if (!row || row.archived) return null;
       return { ...row, tags: JSON.parse(row.tags), _score: h._distance };
     }).filter(Boolean);
     res.json(results);
@@ -157,17 +161,41 @@ app.get('/api/memory/semantic', async (req: Request, res: Response) => {
   }
 });
 
+app.get('/api/memory/hybrid', async (req: Request, res: Response) => {
+  try {
+    const { q, ns, prefix, limit = '10' } = req.query;
+    if (!q) { res.json([]); return; }
+    const lim = Math.min(parseInt(String(limit), 10) || 10, 50);
+    const results = await hybridSearch({ query: String(q), namespace: ns ? String(ns) : undefined, prefix: prefix ? String(prefix) : undefined, limit: lim });
+    res.json(results);
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
 app.get('/api/memory/list', (req: Request, res: Response) => {
   try {
-    const { ns, tag, limit = '50', offset = '0' } = req.query;
-    let sql = 'SELECT * FROM memory WHERE 1=1';
+    const { ns, tag, prefix, limit = '50', offset = '0' } = req.query;
+    purgeExpired();
+    let sql = 'SELECT * FROM memory WHERE archived = 0';
     const params: (string | number)[] = [];
     if (ns) { sql += ' AND namespace = ?'; params.push(String(ns)); }
     if (tag) { sql += ' AND tags LIKE ?'; params.push(`%"${String(tag)}"%`); }
+    if (prefix) { sql += ' AND key LIKE ?'; params.push(`${String(prefix)}%`); }
     sql += ' ORDER BY updated_at DESC LIMIT ? OFFSET ?';
     params.push(Math.min(parseInt(String(limit), 10) || 50, 200), parseInt(String(offset), 10) || 0);
     const rows = db.prepare(sql).all(...params) as unknown as MemoryRow[];
     res.json(rows.map(r => ({ ...r, tags: JSON.parse(r.tags) })));
+  } catch (err) {
+    res.status(500).json({ error: errorMessage(err) });
+  }
+});
+
+app.post('/api/memory/consolidate', async (req: Request, res: Response) => {
+  try {
+    const { namespace, similarity_threshold, min_cluster_size } = req.body;
+    const result = await consolidateNamespace({ namespace, similarity_threshold, min_cluster_size });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ error: errorMessage(err) });
   }
@@ -196,17 +224,18 @@ app.get('/api/artifacts', (req: Request, res: Response) => {
 
 app.post('/api/memory', (req: Request, res: Response) => {
   try {
-    const { key, value, tags = [], namespace = 'default', source } = req.body;
+    const { key, value, tags = [], namespace = 'default', source, ttl_seconds } = req.body;
     if (!key || !value) { res.status(400).json({ error: 'key and value are required' }); return; }
     const now = Date.now();
     const tagsJson = JSON.stringify(tags);
+    const expiresAt = ttl_seconds ? now + Number(ttl_seconds) * 1000 : null;
     const existing = db.prepare('SELECT created_at FROM memory WHERE key = ? AND namespace = ?').get(key, namespace);
     if (existing) {
-      db.prepare('UPDATE memory SET value=?, tags=?, source=?, updated_at=? WHERE key=? AND namespace=?')
-        .run(value, tagsJson, source ?? 'manual', now, key, namespace);
+      db.prepare('UPDATE memory SET value=?, tags=?, source=?, expires_at=?, updated_at=? WHERE key=? AND namespace=?')
+        .run(value, tagsJson, source ?? 'manual', expiresAt, now, key, namespace);
     } else {
-      db.prepare('INSERT INTO memory(key, value, tags, namespace, source, created_at, updated_at) VALUES(?,?,?,?,?,?,?)')
-        .run(key, value, tagsJson, namespace, source ?? 'manual', now, now);
+      db.prepare('INSERT INTO memory(key, value, tags, namespace, source, expires_at, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)')
+        .run(key, value, tagsJson, namespace, source ?? 'manual', expiresAt, now, now);
     }
     setImmediate(async () => { const { vectorUpsert } = await import('./lance.ts'); vectorUpsert(key, namespace, value); });
     res.json({ ok: true });

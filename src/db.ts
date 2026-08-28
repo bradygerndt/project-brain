@@ -11,6 +11,8 @@ export interface MemoryRow {
   created_at: number;
   updated_at: number;
   search_text: string | null;
+  archived: number;
+  expires_at: number | null;
 }
 
 export interface MemorySearchRow extends MemoryRow {
@@ -117,6 +119,23 @@ CREATE TABLE IF NOT EXISTS locks (
   acquired_at INTEGER NOT NULL
 );
 `);
+
+// Additive migration — safe to run every boot. node:sqlite's ALTER TABLE
+// ADD COLUMN throws if the column already exists, so guard on table_info.
+const memoryCols = (db.prepare(`PRAGMA table_info(memory)`).all() as { name: string }[]).map(c => c.name);
+if (!memoryCols.includes('archived')) db.exec(`ALTER TABLE memory ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`);
+if (!memoryCols.includes('expires_at')) db.exec(`ALTER TABLE memory ADD COLUMN expires_at INTEGER`);
+
+// Deletes and returns expired memory rows (TTL-based hard delete). Callers
+// that also maintain the LanceDB vector index (memory.ts) are responsible
+// for vector-deleting the returned keys — kept out of this module so db.ts
+// stays free of a dependency on lance.ts.
+export function purgeExpiredMemory(): { key: string; namespace: string }[] {
+  const now = Date.now();
+  const expired = db.prepare('SELECT key, namespace FROM memory WHERE expires_at IS NOT NULL AND expires_at <= ?').all(now) as { key: string; namespace: string }[];
+  if (expired.length) db.prepare('DELETE FROM memory WHERE expires_at IS NOT NULL AND expires_at <= ?').run(now);
+  return expired;
+}
 
 // Batched (key, namespace) -> row lookup for semantic search results, which
 // otherwise need one query per hit. Returns rows aligned index-for-index
