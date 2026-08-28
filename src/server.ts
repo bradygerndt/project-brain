@@ -26,7 +26,9 @@ function errorMessage(err: unknown): string {
 // descriptions already carry.
 const SERVER_INSTRUCTIONS = `project-brain is a persistent memory service for this project or user, shared across sessions and agents.
 
-Facts are stored under dot-namespaced keys (e.g. "user.role", "project.deadline", "decision.api-style") — reuse an existing key to update a fact rather than creating a near-duplicate under a slightly different name. Use memory_set for a single fact you've already identified.
+Facts are stored under dot-namespaced keys (e.g. "user.role", "project.deadline", "decision.api-style") — reuse an existing key to update a fact rather than creating a near-duplicate under a slightly different name. Before writing a genuinely new key (not updating an existing one), a quick memory_search_hybrid for the topic is worth it too — it can catch a fact that already exists under a *different* key and might contradict what you're about to write, which the exact-match key check above won't. Use memory_set for a single fact you've already identified.
+
+If how much to trust a fact later matters, tag it accordingly — e.g. "verified" for something the user explicitly confirmed vs "inferred" for something you concluded yourself. Not required for every fact, just worth doing when the distinction is meaningful.
 
 To extract facts from a large blob of raw text (a transcript, notes, a document): there's no dedicated tool for this — read the text yourself, identify the distinct stable facts worth keeping, and call memory_set once per fact. You already have an LLM in the loop reading this, so there's no need to hand the text to another model.
 
@@ -36,9 +38,13 @@ To consolidate near-duplicate memories in a namespace once it's accumulated a lo
 
 To summarize what's stored (a whole namespace, or a narrower slice via a prefix or tag): there's no dedicated tool for this either — gather the entries yourself with memory_list/memory_search (paginate with offset if there's more than one page), skipping any entry already tagged "summary" so you don't summarize a previous summary, write the summary yourself, then store it back with memory_set under a conventional key so it's easy to find and update later — "<namespace>._summary" for a whole-namespace summary, or a narrower key like "decision._summary" when you summarized just one prefix — tagged ["summary"]. Reuse that same key next time so it updates in place instead of accumulating stale summaries.
 
-If you're a client that supports Skills (e.g. Claude Code) and don't already have a local skill for this server in the current project, consider saving the extraction/consolidation/summarization guidance above as one (e.g. .claude/skills/project-brain-memory/SKILL.md) so future sessions in this project don't need to rediscover it from these instructions every time.
+If you're a client that supports Skills (e.g. Claude Code) and don't already have a local skill for this server in the current project, consider saving the guidance above as one (e.g. .claude/skills/project-brain-memory/SKILL.md) so future sessions in this project don't need to rediscover it from these instructions every time.
 
 namespace (default: "default") partitions memories — use a distinct namespace per project or user if this instance is shared across contexts that shouldn't mix.
+
+There's no fixed vocabulary for key prefixes — use whatever's clearest for the project. One loose starting point, if you don't already have a convention: "user.*" for things about the person, "project.*" for project-level facts, "decision.*" for choices made and why. Take it as a suggestion, not a schema — adapt or ignore as fits.
+
+For short-lived reasoning state that shouldn't outlive the task it's for (e.g. "currently investigating X"), consider a dedicated namespace like "scratch" combined with ttl_seconds on memory_set, so it expires on its own instead of needing manual cleanup.
 
 Agent presence (agent_ping/agent_list) and resource locks (lock_acquire/lock_release) are opt-in — nothing is tracked automatically just by connecting. Call agent_ping if you want other agents to see you're active.`;
 
