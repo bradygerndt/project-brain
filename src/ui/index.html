@@ -182,7 +182,25 @@
     <div class="search-bar">
       <input id="tagFilter" type="text" placeholder="Filter by tag…">
       <button onclick="loadArtifacts()">Filter</button>
+      <button class="btn-ghost" onclick="toggleArtifactForm()">+ Add</button>
     </div>
+
+    <div class="add-form" id="artifactForm">
+      <label>Name</label>
+      <input id="newArtifactName" placeholder="e.g. notes.md">
+      <label>Content</label>
+      <textarea id="newArtifactContent" placeholder="File content (utf8 text)"></textarea>
+      <label>MIME type</label>
+      <input id="newArtifactMime" placeholder="text/plain">
+      <label>Tags (comma-separated)</label>
+      <input id="newArtifactTags" placeholder="tag1, tag2">
+      <div class="actions">
+        <button class="btn" onclick="addArtifact()">Save</button>
+        <button class="btn btn-ghost" onclick="toggleArtifactForm()">Cancel</button>
+      </div>
+    </div>
+
+    <div id="artifactError" class="error" style="display:none"></div>
     <div id="artifactResults"></div>
   </div>
 
@@ -241,7 +259,7 @@ function renderMemoryTable(rows, isSearch = false) {
     document.getElementById('memResults').innerHTML = '<div class="empty">No results</div>';
     return;
   }
-  const cols = isSearch ? 'Key,Value / Snippet,Namespace,Tags,Source,Updated' : 'Key,Value,Namespace,Tags,Source,Updated';
+  const cols = (isSearch ? 'Key,Value / Snippet,Namespace,Tags,Source,Updated' : 'Key,Value,Namespace,Tags,Source,Updated') + ',';
   let html = `<table><thead><tr>${cols.split(',').map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>`;
   for (const r of rows) {
     const tags = (r.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('');
@@ -256,10 +274,22 @@ function renderMemoryTable(rows, isSearch = false) {
       <td>${tags}</td>
       <td class="source">${esc(r.source ?? '—')}</td>
       <td class="age">${timeAgo(r.updated_at)}</td>
+      <td><button class="btn-ghost" onclick="deleteMemory('${esc(escJs(r.key))}','${esc(escJs(r.namespace ?? 'default'))}')">Delete</button></td>
     </tr>`;
   }
   html += '</tbody></table>';
   document.getElementById('memResults').innerHTML = html;
+}
+
+async function deleteMemory(key, namespace) {
+  if (!confirm(`Delete memory "${key}" (${namespace})?`)) return;
+  try {
+    const url = `${BASE}/api/memory?key=${encodeURIComponent(key)}&namespace=${encodeURIComponent(namespace)}`;
+    const res = await fetch(url, { method: 'DELETE' });
+    const d = await res.json();
+    if (d.error) throw new Error(d.error);
+    if (lastSearch) searchMemory(); else loadAllMemory(currentOffset);
+  } catch (e) { showError('mem', e.message); }
 }
 
 async function searchMemory() {
@@ -355,10 +385,55 @@ async function loadArtifacts() {
           <div class="artifact-meta">${esc(a.mime_type)} · ${(a.size_bytes/1024).toFixed(1)}KB</div>
           <div class="artifact-meta">${timeAgo(a.created_at)}</div>
           <a class="artifact-link" href="${esc(a.url)}" target="_blank">Open ↗</a>
+          <button class="btn-ghost" style="margin-top:6px" onclick="deleteArtifact('${esc(escJs(a.id))}')">Delete</button>
         </div>
       </div>`).join('')}</div>`;
     document.getElementById('artifactResults').innerHTML = html;
   } catch (e) { document.getElementById('artifactResults').innerHTML = `<div class="error">${esc(e.message)}</div>`; }
+}
+
+function toggleArtifactForm() {
+  document.getElementById('artifactForm').classList.toggle('open');
+}
+
+async function addArtifact() {
+  const name = document.getElementById('newArtifactName').value.trim();
+  const content = document.getElementById('newArtifactContent').value;
+  const mime_type = document.getElementById('newArtifactMime').value.trim() || 'text/plain';
+  const tags = document.getElementById('newArtifactTags').value.split(',').map(t=>t.trim()).filter(Boolean);
+  if (!name || !content) { showArtifactError('Name and content are required'); return; }
+  try {
+    const res = await fetch(`${BASE}/api/artifacts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, content, encoding: 'utf8', mime_type, tags })
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error);
+    toggleArtifactForm();
+    document.getElementById('newArtifactName').value = '';
+    document.getElementById('newArtifactContent').value = '';
+    document.getElementById('newArtifactMime').value = '';
+    document.getElementById('newArtifactTags').value = '';
+    showArtifactError(null);
+    loadArtifacts();
+  } catch (e) { showArtifactError(e.message); }
+}
+
+async function deleteArtifact(id) {
+  if (!confirm('Delete this artifact?')) return;
+  try {
+    const res = await fetch(`${BASE}/api/artifacts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    const d = await res.json();
+    if (d.error) throw new Error(d.error);
+    loadArtifacts();
+  } catch (e) { showArtifactError(e.message); }
+}
+
+function showArtifactError(msg) {
+  const el = document.getElementById('artifactError');
+  el.style.display = msg ? 'block' : 'none';
+  if (msg) el.textContent = msg;
 }
 
 function expiresIn(ms) {
@@ -431,6 +506,10 @@ function esc(s) {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+function escJs(s) {
+  return String(s ?? '').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+}
+
 // Health poll + init
 async function pollHealth() {
   try {
@@ -439,10 +518,6 @@ async function pollHealth() {
     document.getElementById('sessionCount').textContent = `${d.sessions} session${d.sessions!==1?'s':''}`;
   } catch {}
 }
-
-// POST /api/memory handler (the UI add form uses this)
-// We add a lightweight REST write endpoint on the server side too
-// For now, wire via MCP is the canonical write path; the UI form is a convenience
 
 pollHealth();
 setInterval(pollHealth, 10000);

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { resolve, extname } from 'node:path';
 import { db, dataPath } from './db.ts';
 import type { ArtifactRow } from './db.ts';
@@ -24,7 +24,7 @@ export function resolveHost(): string {
   return '127.0.0.1';
 }
 
-function artifactUrl(id: string, filename: string): string {
+export function artifactUrl(id: string, filename: string): string {
   const port = process.env.ARTIFACTS_PORT ?? '3580';
   return `http://${resolveHost()}:${port}/artifacts/${id}/${filename}`;
 }
@@ -40,6 +40,43 @@ function safeFilename(name: string, mimeType: string): string {
   return base + ext;
 }
 
+export interface CreateArtifactInput {
+  name: string;
+  content: string;
+  encoding?: 'utf8' | 'base64';
+  mime_type?: string;
+  tags?: string[];
+}
+
+// Shared by the artifact_write MCP tool and the POST /api/artifacts REST
+// endpoint so both write paths stay in sync.
+export function createArtifact({ name, content, encoding = 'utf8', mime_type = 'application/octet-stream', tags = [] }: CreateArtifactInput): { id: string; url: string } {
+  const id = randomUUID();
+  const filename = safeFilename(name, mime_type);
+  const dir = resolve(artifactsDir, id);
+  mkdirSync(dir, { recursive: true });
+
+  const buf = encoding === 'base64' ? Buffer.from(content, 'base64') : Buffer.from(content, 'utf8');
+  writeFileSync(resolve(dir, filename), buf);
+
+  const now = Date.now();
+  db.prepare(
+    'INSERT INTO artifacts(id, name, mime_type, filename, size_bytes, tags, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)'
+  ).run(id, name, mime_type, filename, buf.byteLength, JSON.stringify(tags), now, now);
+
+  return { id, url: artifactUrl(id, filename) };
+}
+
+// Shared by the artifact_delete MCP tool and the DELETE /api/artifacts/:id
+// REST endpoint. Removes both the DB row and the artifact's file directory.
+export function deleteArtifact(id: string): boolean {
+  const row = db.prepare('SELECT id FROM artifacts WHERE id = ?').get(id) as Pick<ArtifactRow, 'id'> | undefined;
+  if (!row) return false;
+  db.prepare('DELETE FROM artifacts WHERE id = ?').run(id);
+  rmSync(resolve(artifactsDir, id), { recursive: true, force: true });
+  return true;
+}
+
 export function registerArtifactTools(server: McpServer) {
   server.registerTool(
     'artifact_write',
@@ -50,21 +87,9 @@ export function registerArtifactTools(server: McpServer) {
       mime_type: z.string().optional(),
       tags: z.array(z.string()).optional(),
     } },
-    async ({ name, content, encoding = 'utf8', mime_type = 'application/octet-stream', tags = [] }) => {
-      const id = randomUUID();
-      const filename = safeFilename(name, mime_type);
-      const dir = resolve(artifactsDir, id);
-      mkdirSync(dir, { recursive: true });
-
-      const buf = encoding === 'base64' ? Buffer.from(content, 'base64') : Buffer.from(content, 'utf8');
-      writeFileSync(resolve(dir, filename), buf);
-
-      const now = Date.now();
-      db.prepare(
-        'INSERT INTO artifacts(id, name, mime_type, filename, size_bytes, tags, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?)'
-      ).run(id, name, mime_type, filename, buf.byteLength, JSON.stringify(tags), now, now);
-
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ id, url: artifactUrl(id, filename) }) }] };
+    async (input) => {
+      const result = createArtifact(input);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 
@@ -103,6 +128,15 @@ export function registerArtifactTools(server: McpServer) {
         ...r, tags: JSON.parse(r.tags), url: artifactUrl(r.id, r.filename)
       }));
       return { content: [{ type: 'text' as const, text: JSON.stringify(results) }] };
+    }
+  );
+
+  server.registerTool(
+    'artifact_delete',
+    { description: 'Delete a stored artifact and its file.', inputSchema: { id: z.string() } },
+    async ({ id }) => {
+      const deleted = deleteArtifact(id);
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ deleted }) }] };
     }
   );
 
