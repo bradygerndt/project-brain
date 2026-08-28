@@ -95,7 +95,6 @@ type CreateOpts struct {
 	DataVolume    string
 	CacheVolume   string
 	InstanceName  string // BRAIN_NAME env var
-	AnthropicKey  string // may be empty — only needed for memory_extract
 	ArtifactsHost string // may be empty — overrides the host in artifact URLs
 }
 
@@ -113,9 +112,6 @@ func Create(opts CreateOpts) error {
 		"-e", "BRAIN_NAME=" + opts.InstanceName,
 		"-e", fmt.Sprintf("MCP_PORT=%d", opts.MCPPort),
 		"-e", fmt.Sprintf("ARTIFACTS_PORT=%d", opts.ArtifactsPort),
-	}
-	if opts.AnthropicKey != "" {
-		args = append(args, "-e", "ANTHROPIC_API_KEY="+opts.AnthropicKey)
 	}
 	if opts.ArtifactsHost != "" {
 		args = append(args, "-e", "ARTIFACTS_HOST="+opts.ArtifactsHost)

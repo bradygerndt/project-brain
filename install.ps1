@@ -59,18 +59,6 @@ if (($UserPath -split ";") -notcontains $BinDir) {
     Write-Host "OK $BinDir is already in your PATH" -ForegroundColor Green
 }
 
-# -- %APPDATA%\brain\.env ----------------------------------------------------
-$ConfigDir = if ($env:BRAIN_CONFIG_DIR) { $env:BRAIN_CONFIG_DIR } else { Join-Path $env:APPDATA "brain" }
-$EnvFile = Join-Path $ConfigDir ".env"
-if (-not (Test-Path $EnvFile)) {
-    New-Item -ItemType Directory -Path $ConfigDir -Force | Out-Null
-    Set-Content -Path $EnvFile -Value "ANTHROPIC_API_KEY=" -NoNewline
-    Write-Host "!  .env created - edit $EnvFile and add your ANTHROPIC_API_KEY" -ForegroundColor Yellow
-    Write-Host "!  (only needed for the memory_extract tool)" -ForegroundColor Yellow
-} else {
-    Write-Host "OK .env exists" -ForegroundColor Green
-}
-
 # -- Docker -------------------------------------------------------------------
 if (Get-Command docker -ErrorAction SilentlyContinue) {
     $DockerVer = (docker --version) -replace '[^\d.]*(\d+\.\d+\.\d+).*', '$1'

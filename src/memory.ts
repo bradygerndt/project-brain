@@ -3,8 +3,6 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { db, getMemoryRowsForHits, purgeExpiredMemory } from './db.ts';
 import type { MemoryRow, MemorySearchRow } from './db.ts';
 import { vectorUpsert, vectorDelete, vectorSearch, vectorsForNamespace } from './lance.ts';
-import { extractFacts } from './extract.ts';
-import { consolidateCluster } from './consolidate.ts';
 
 // Hard-deletes memory rows past their TTL and drops their vectors. Called at
 // the top of every discovery/read path so expired entries never surface.
@@ -68,7 +66,7 @@ export async function hybridSearch({ query, namespace, prefix, limit = 10 }: Hyb
   }).filter(Boolean);
 }
 
-export interface ConsolidateOptions {
+export interface FindClustersOptions {
   namespace?: string;
   similarity_threshold?: number;
   min_cluster_size?: number;
@@ -87,11 +85,11 @@ function dot(a: number[], b: number[]): number {
   return sum;
 }
 
-// Clusters a namespace's memories by embedding similarity and uses Haiku to
-// merge each cluster into one fact, archiving the rest (soft delete — still
-// fetchable by exact key via memory_get). Shared by the memory_consolidate
-// MCP tool and the POST /api/memory/consolidate REST endpoint.
-export async function consolidateNamespace({ namespace = 'default', similarity_threshold = 0.85, min_cluster_size = 2 }: ConsolidateOptions) {
+// Clusters a namespace's live (non-archived) memories by embedding
+// similarity — read-only, no merging or writing. The caller (an LLM agent)
+// reads the returned entries, decides how to merge them, and writes the
+// result back itself via memory_set + memory_archive.
+export async function findClusters({ namespace = 'default', similarity_threshold = 0.85, min_cluster_size = 2 }: FindClustersOptions) {
   purgeExpired();
 
   const liveKeys = new Set(
@@ -113,35 +111,32 @@ export async function consolidateNamespace({ namespace = 'default', similarity_t
     if (group) group.push(i); else groups.set(root, [i]);
   }
 
-  const clusters = [...groups.values()].filter(g => g.length >= min_cluster_size);
-  const consolidated: { key: string; value: string; tags: string[]; merged_from: string[] }[] = [];
-  let entriesArchived = 0;
+  const clusters = [...groups.values()]
+    .filter(g => g.length >= min_cluster_size)
+    .map(group => {
+      const keys = group.map(i => ({ key: vectors[i].key, namespace }));
+      const rows = (getMemoryRowsForHits(keys).filter(Boolean) as MemoryRow[])
+        .sort((a, b) => b.updated_at - a.updated_at)
+        .map(r => ({ key: r.key, value: r.value, tags: JSON.parse(r.tags) as string[], updated_at: r.updated_at }));
+      return { keys: rows.map(r => r.key), entries: rows };
+    });
 
-  for (const cluster of clusters) {
-    const keys = cluster.map(i => ({ key: vectors[i].key, namespace }));
-    const rows = (getMemoryRowsForHits(keys).filter(Boolean) as MemoryRow[])
-      .sort((a, b) => b.updated_at - a.updated_at);
-    if (rows.length < min_cluster_size) continue;
+  return { namespace, clusters };
+}
 
-    const [survivor, ...rest] = rows;
-    const { value } = await consolidateCluster(rows.map(r => ({ key: r.key, value: r.value, updated_at: r.updated_at })));
-    const tags = [...new Set(rows.flatMap(r => JSON.parse(r.tags) as string[]).concat('consolidated'))];
-    const now = Date.now();
+export interface ArchiveMemoryOptions {
+  key: string;
+  namespace?: string;
+}
 
-    db.prepare('UPDATE memory SET value=?, tags=?, source=?, updated_at=? WHERE key=? AND namespace=?')
-      .run(value, JSON.stringify(tags), 'consolidated', now, survivor.key, namespace);
-    setImmediate(() => vectorUpsert(survivor.key, namespace, value));
-
-    for (const r of rest) {
-      db.prepare('UPDATE memory SET archived=1, updated_at=? WHERE key=? AND namespace=?').run(now, r.key, namespace);
-      setImmediate(() => vectorDelete(r.key));
-    }
-    entriesArchived += rest.length;
-
-    consolidated.push({ key: survivor.key, value, tags, merged_from: rows.map(r => r.key) });
-  }
-
-  return { namespace, clusters_found: consolidated.length, entries_archived: entriesArchived, consolidated };
+// Soft-deletes an entry: still fetchable by exact key via memory_get, but
+// excluded from memory_list/memory_search/memory_search_semantic/
+// memory_search_hybrid and dropped from the vector index.
+export function archiveMemory({ key, namespace = 'default' }: ArchiveMemoryOptions): { archived: boolean } {
+  const result = db.prepare('UPDATE memory SET archived=1, updated_at=? WHERE key=? AND namespace=?')
+    .run(Date.now(), key, namespace);
+  if (result.changes > 0) setImmediate(() => vectorDelete(key));
+  return { archived: result.changes > 0 };
 }
 
 export function registerMemoryTools(server: McpServer) {
@@ -282,14 +277,26 @@ export function registerMemoryTools(server: McpServer) {
   );
 
   server.registerTool(
-    'memory_consolidate',
-    { description: 'Cluster near-duplicate/related memories in a namespace by embedding similarity and merge each cluster into one fact via Claude Haiku. Merged-away entries are archived (soft-deleted), not lost — still fetchable by exact key via memory_get. Requires ANTHROPIC_API_KEY.', inputSchema: {
-      namespace: z.string().optional().describe('Defaults to "default". Scans one namespace at a time by design, to avoid accidentally merging unrelated projects/users in one call.'),
-      similarity_threshold: z.number().min(0).max(1).optional().describe('Cosine similarity above which two entries are clustered together. Default 0.85 (conservative — only near-duplicates).'),
-      min_cluster_size: z.number().int().min(2).optional().describe('Minimum cluster size to merge. Default 2.'),
+    'memory_find_clusters',
+    { description: 'Read-only: cluster near-duplicate/related memories in a namespace by embedding similarity and return the full entries in each cluster. Does not merge or write anything — read the entries yourself, decide how to merge them, then write the result with memory_set (on the key you want to keep) and archive the rest with memory_archive.', inputSchema: {
+      namespace: z.string().optional().describe('Defaults to "default". Scans one namespace at a time by design, to avoid mixing unrelated projects/users in one call.'),
+      similarity_threshold: z.number().min(0).max(1).optional().describe('Cosine similarity above which two entries are grouped together. Default 0.85 (conservative — only near-duplicates).'),
+      min_cluster_size: z.number().int().min(2).optional().describe('Minimum cluster size to report. Default 2.'),
     } },
     async ({ namespace, similarity_threshold, min_cluster_size }) => {
-      const result = await consolidateNamespace({ namespace, similarity_threshold, min_cluster_size });
+      const result = await findClusters({ namespace, similarity_threshold, min_cluster_size });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
+    }
+  );
+
+  server.registerTool(
+    'memory_archive',
+    { description: 'Soft-delete a memory entry: still fetchable by exact key via memory_get, but excluded from memory_list/memory_search/memory_search_semantic/memory_search_hybrid. Use this instead of memory_delete when you want to hide an entry (e.g. one merged away by memory_find_clusters) without losing it.', inputSchema: {
+      key: z.string(),
+      namespace: z.string().optional(),
+    } },
+    async ({ key, namespace }) => {
+      const result = archiveMemory({ key, namespace });
       return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
@@ -304,36 +311,6 @@ export function registerMemoryTools(server: McpServer) {
       const result = db.prepare('DELETE FROM memory WHERE key = ? AND namespace = ?').run(key, namespace);
       setImmediate(() => vectorDelete(key));
       return { content: [{ type: 'text' as const, text: JSON.stringify({ deleted: result.changes > 0 }) }] };
-    }
-  );
-
-  server.registerTool(
-    'memory_extract',
-    { description: 'Use Claude Haiku to extract structured facts from raw text and store them as memories. Requires ANTHROPIC_API_KEY.', inputSchema: {
-      text: z.string().describe('Raw text to extract facts from (conversation, note, document, etc.)'),
-      namespace: z.string().optional(),
-      context: z.string().optional().describe('Optional hint about what this text is about'),
-    } },
-    async ({ text, namespace = 'default', context }) => {
-      const facts = await extractFacts(text, context);
-      const now = Date.now();
-      const stored: { key: string; value: string; tags: string[] }[] = [];
-
-      for (const { key, value, tags = [] } of facts) {
-        const tagsJson = JSON.stringify(tags);
-        const existing = db.prepare('SELECT created_at FROM memory WHERE key = ? AND namespace = ?').get(key, namespace);
-        if (existing) {
-          db.prepare('UPDATE memory SET value=?, tags=?, source=?, updated_at=? WHERE key=? AND namespace=?')
-            .run(value, tagsJson, 'extracted', now, key, namespace);
-        } else {
-          db.prepare('INSERT INTO memory(key, value, tags, namespace, source, created_at, updated_at) VALUES(?,?,?,?,?,?,?)')
-            .run(key, value, tagsJson, namespace, 'extracted', now, now);
-        }
-        setImmediate(() => vectorUpsert(key, namespace, value));
-        stored.push({ key, value, tags });
-      }
-
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ extracted: stored.length, facts: stored }) }] };
     }
   );
 }

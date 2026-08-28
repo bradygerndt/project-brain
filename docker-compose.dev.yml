@@ -19,7 +19,6 @@ services:
       BRAIN_NAME: dev
       MCP_PORT: 3579
       ARTIFACTS_PORT: 3580
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
 volumes:
   brain-dev-data: null
   brain-hf-cache: null

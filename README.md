@@ -16,8 +16,6 @@ Runs in Docker, is managed through the `brain` CLI, and supports multiple indepe
 
 - **Memory** — key/value facts with tags and namespaces, full-text search (SQLite FTS5), and
   vector similarity search (LanceDB + local embeddings).
-- **Fact extraction** — `memory_extract` uses Claude Haiku to pull structured facts out of raw
-  text (conversation logs, notes, docs) and store them automatically.
 - **Artifacts** — store and serve arbitrary files (HTML, images, JSON, …) over HTTP.
 - **Agent coordination** — presence pings (`agent_ping`/`agent_list`) and resource locks
   (`lock_acquire`/`lock_release`) for multiple agents sharing one project.
@@ -31,13 +29,6 @@ Runs in Docker, is managed through the `brain` CLI, and supports multiple indepe
   server images are pulled prebuilt from GHCR, never built locally)
 - `curl` and `tar` (to install on macOS/Linux/WSL — both are preinstalled on virtually every
   system) or PowerShell 5.1+ (built into Windows, to install natively)
-- An `ANTHROPIC_API_KEY` — **optional.** The server runs fully without one; it's only used by
-  `memory_extract`, where *the server itself* (not your MCP client) makes its own separate
-  call to Claude Haiku to pull structured facts out of raw text — handy for importing a
-  meeting transcript or chat log, bulk-loading notes from a document, or letting a
-  non-agentic script (a cron job, a webhook receiver) ingest raw text without an LLM already
-  in the loop to decide what's worth keeping. Skip it and every other tool still works, you
-  just enter facts one at a time via `memory_set` instead of extracting many at once.
 
 The `brain` CLI is a standalone compiled binary — no Node.js, npm, or Go toolchain needed to
 install or run it. (Node is only used to build the server image in CI; contributors editing
@@ -68,14 +59,6 @@ Windows — and add that directory to your `PATH` if needed. No repo checkout, n
 package manager.
 
 Re-running the same command later upgrades the CLI to the newest release.
-
-Optional — add your Anthropic API key if you want `memory_extract` (skip this otherwise):
-
-```bash
-$EDITOR ~/.config/brain/.env   # set ANTHROPIC_API_KEY=sk-ant-...
-```
-
-(`%APPDATA%\brain\.env` on native Windows. Override the location with `BRAIN_CONFIG_DIR`.)
 
 ## Quick start
 
@@ -223,7 +206,8 @@ under the hood (SQLite vs. LanceDB, sync vs. async indexing).
 - `memory_search_semantic` — vector similarity search
 - `memory_list` — list with optional namespace/tag filters
 - `memory_delete` — remove by key
-- `memory_extract` — extract structured facts from raw text via Claude Haiku
+- `memory_find_clusters` — read-only: group near-duplicate/related memories by embedding similarity
+- `memory_archive` — soft-delete an entry (still fetchable by exact key, hidden from search/list)
 
 **Artifacts**
 - `artifact_write` — store a file, returns id + URL
@@ -256,13 +240,10 @@ The artifacts server (separate port) serves stored files at `/artifacts/<id>/<fi
 
 ## Configuration
 
-`~/.config/brain/.env` (created by the installer) or an already-exported shell env var
-(which takes precedence) supplies `ANTHROPIC_API_KEY` — `brain` reads it and passes it into
-each container it creates. Inside the container itself:
+`brain` sets these automatically inside each container it creates:
 
 | Variable | Purpose |
 |---|---|
-| `ANTHROPIC_API_KEY` | Required for `memory_extract` |
 | `BRAIN_NAME` | Instance name, set automatically by `brain` |
 | `MCP_PORT` | Port for the `/mcp` endpoint and web UI, set automatically by `brain` |
 | `ARTIFACTS_PORT` | Port for serving stored artifacts, set automatically by `brain` |

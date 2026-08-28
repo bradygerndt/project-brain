@@ -93,8 +93,8 @@ export async function vectorDelete(key: string): Promise<void> {
   }
 }
 
-// Filter-only scan (no query vector) — used by memory_consolidate to pull
-// every embedding in a namespace for clustering.
+// Filter-only scan (no query vector) — used by findClusters (memory.ts) to
+// pull every embedding in a namespace for clustering.
 export async function vectorsForNamespace(namespace: string): Promise<NamespaceVectorRow[]> {
   try {
     const tbl = await getTable();

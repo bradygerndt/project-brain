@@ -153,7 +153,6 @@
       <button onclick="searchMemory()">Search</button>
       <button class="btn-ghost" onclick="loadAllMemory()">Browse all</button>
       <button class="btn-ghost" onclick="toggleAddForm()">+ Add</button>
-      <button class="btn-ghost" onclick="consolidateMemory()">Consolidate</button>
     </div>
 
     <div class="add-form" id="addForm">
@@ -352,29 +351,6 @@ function openValueSheet(el) {
 
 function closeValueSheet() {
   document.getElementById('valueSheet').classList.remove('open');
-}
-
-async function consolidateMemory() {
-  const ns = document.getElementById('nsFilter').value.trim() || 'default';
-  if (!confirm(`Consolidate memories in namespace "${ns}"? This will merge near-duplicate entries.`)) return;
-  showError('mem', null);
-  const prevHtml = document.getElementById('memResults').innerHTML;
-  document.getElementById('memResults').innerHTML = '<div class="loading">Consolidating… (uses Claude Haiku, may take a few seconds)</div>';
-  try {
-    const res = await fetch(`${BASE}/api/memory/consolidate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ namespace: ns })
-    });
-    const d = await res.json();
-    if (!res.ok) throw new Error(d.error);
-    if (lastSearch) await searchMemory(); else await loadAllMemory(currentOffset);
-    showError('mem', null);
-    alert(`Merged ${d.entries_archived} entries into ${d.clusters_found} consolidated fact(s).`);
-  } catch (e) {
-    document.getElementById('memResults').innerHTML = prevHtml;
-    showError('mem', e.message);
-  }
 }
 
 function toggleAddForm() {

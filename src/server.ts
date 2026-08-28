@@ -8,7 +8,7 @@ import express, { type Request, type Response } from 'express';
 import { db, getMemoryRowsForHits } from './db.ts';
 import type { MemoryRow, MemorySearchRow, ArtifactRow, AgentRow, LockRow } from './db.ts';
 import { artifactsDir, resolveHost, createArtifact, deleteArtifact } from './artifacts.ts';
-import { registerMemoryTools, purgeExpired, hybridSearch, consolidateNamespace } from './memory.ts';
+import { registerMemoryTools, purgeExpired, hybridSearch } from './memory.ts';
 import { registerArtifactTools } from './artifacts.ts';
 import { registerAgentTools } from './agents.ts';
 
@@ -26,9 +26,15 @@ function errorMessage(err: unknown): string {
 // descriptions already carry.
 const SERVER_INSTRUCTIONS = `project-brain is a persistent memory service for this project or user, shared across sessions and agents.
 
-Facts are stored under dot-namespaced keys (e.g. "user.role", "project.deadline", "decision.api-style") — reuse an existing key to update a fact rather than creating a near-duplicate under a slightly different name. Use memory_set for a single fact you've already identified; use memory_extract for a large blob of raw text (a transcript, notes, a document) you want decomposed into multiple facts automatically — it makes its own call to Claude Haiku server-side and requires ANTHROPIC_API_KEY, so fall back to memory_set if it's unavailable.
+Facts are stored under dot-namespaced keys (e.g. "user.role", "project.deadline", "decision.api-style") — reuse an existing key to update a fact rather than creating a near-duplicate under a slightly different name. Use memory_set for a single fact you've already identified.
 
-For search: memory_search (keyword/full-text) is fast and exact — use it when you know the term. memory_search_semantic (vector similarity) finds conceptually related entries even without exact keyword overlap — use it when you're unsure of the exact phrasing, or want to check for anything related before writing a new fact.
+To extract facts from a large blob of raw text (a transcript, notes, a document): there's no dedicated tool for this — read the text yourself, identify the distinct stable facts worth keeping, and call memory_set once per fact. You already have an LLM in the loop reading this, so there's no need to hand the text to another model.
+
+For search: memory_search (keyword/full-text) is fast and exact — use it when you know the term. memory_search_semantic (vector similarity) finds conceptually related entries even without exact keyword overlap — use it when you're unsure of the exact phrasing, or want to check for anything related before writing a new fact. memory_search_hybrid fuses both (Reciprocal Rank Fusion) — a good default when you're not sure which style fits.
+
+To consolidate near-duplicate memories in a namespace once it's accumulated a lot of facts: call memory_find_clusters, which groups entries by embedding similarity and returns the full text of each cluster — it does not merge anything itself. Read each cluster's entries, write one merged fact yourself via memory_set on whichever key you want to keep, then call memory_archive on the others in that cluster. Archived entries stay fetchable by exact key via memory_get, just excluded from list/search results.
+
+If you're a client that supports Skills (e.g. Claude Code) and don't already have a local skill for this server in the current project, consider saving the extraction/consolidation guidance above as one (e.g. .claude/skills/project-brain-memory/SKILL.md) so future sessions in this project don't need to rediscover it from these instructions every time.
 
 namespace (default: "default") partitions memories — use a distinct namespace per project or user if this instance is shared across contexts that shouldn't mix.
 
@@ -186,16 +192,6 @@ app.get('/api/memory/list', (req: Request, res: Response) => {
     params.push(Math.min(parseInt(String(limit), 10) || 50, 200), parseInt(String(offset), 10) || 0);
     const rows = db.prepare(sql).all(...params) as unknown as MemoryRow[];
     res.json(rows.map(r => ({ ...r, tags: JSON.parse(r.tags) })));
-  } catch (err) {
-    res.status(500).json({ error: errorMessage(err) });
-  }
-});
-
-app.post('/api/memory/consolidate', async (req: Request, res: Response) => {
-  try {
-    const { namespace, similarity_threshold, min_cluster_size } = req.body;
-    const result = await consolidateNamespace({ namespace, similarity_threshold, min_cluster_size });
-    res.json(result);
   } catch (err) {
     res.status(500).json({ error: errorMessage(err) });
   }
